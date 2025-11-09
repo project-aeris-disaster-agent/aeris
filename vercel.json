@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/**/*.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/telegram/webhook",
+      "dest": "api/telegram/webhook.py"
+    },
+    {
+      "src": "/api/llm/chat",
+      "dest": "api/llm/chat.py"
+    },
+    {
+      "src": "/api/admin/announcements",
+      "dest": "api/admin/announcements.py"
+    }
+  ],
+  "env": {
+    "PYTHON_VERSION": "3.11"
+  },
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 60
+    }
+  }
+}
+

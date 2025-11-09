@@ -1,0 +1,37 @@
+# Disaster Response Telegram Bot - Python Dependencies
+# See SPEC.md Section 4.1 for tech stack details
+
+# Telegram Bot Framework
+telethon>=1.34.0
+
+# LLM Integration
+openai>=1.0.0  # For OpenRouter API compatibility
+httpx>=0.25.0  # For async HTTP requests
+
+# Database
+supabase>=2.0.0
+postgrest>=0.13.0
+
+# Admin Interface
+streamlit>=1.28.0
+
+# Data Sources & Web Scraping
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+feedparser>=6.0.10
+PyPDF2>=3.0.0  # For PDF processing in admin interface
+
+# Session Management (optional Redis)
+redis>=5.0.0  # Optional, for Redis-backed sessions
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.0.0  # For data validation
+python-dateutil>=2.8.2
+
+# Logging & Monitoring
+structlog>=23.2.0
+
+# Vercel Python Runtime
+# Note: Vercel provides Python runtime automatically
+
