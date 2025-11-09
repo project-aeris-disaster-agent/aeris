@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Lazy import for LLM components (optional)
 try:
-    from llm.openrouter_client import OpenRouterClient
+    from llm.openai_client import OpenAIClient
     from llm.prompt_builder import CharacterCard, PromptBuilder
     LLM_AVAILABLE = True
 except ImportError:
@@ -65,7 +65,7 @@ class MessageHandler:
         
         if self.use_llm:
             try:
-                self.llm_client = OpenRouterClient()
+                self.llm_client = OpenAIClient()
                 
                 # Load character card
                 import os
@@ -251,8 +251,9 @@ class MessageHandler:
             has_rag = 'Relevant Information from Knowledge Base' in system_msg
             if has_rag:
                 logger.info("✅ RAG context injected in system prompt")
+                logger.info("⚠️ Monitoring response to ensure RAG context is used (not external references)")
             else:
-                logger.debug("No RAG context found (may not be needed for this query)")
+                logger.warning(f"⚠️ No RAG context found for query: '{message[:50]}' - may need better retrieval")
             
             # Call LLM with adjusted parameters for emergencies
             # 300-500 words ≈ 400-650 tokens (rough estimate: 1 word ≈ 1.3 tokens)
@@ -303,6 +304,25 @@ class MessageHandler:
                 # Check if response seems to reference knowledge base content
                 if any(keyword in response_lower for keyword in ['uwan', 'tropical', 'cyclone', 'storm', 'pagasa']):
                     logger.info("✅ Response appears to reference knowledge base content")
+                
+                # VALIDATE: Check if LLM ignored RAG and referred to external sources (CRITICAL FAILURE)
+                if has_rag:
+                    external_refs = ['check pagasa', 'visit pagasa', 'go to pagasa', 'pagasa website', 
+                                    'check their website', 'visit their', 'look up on', 'check the website',
+                                    'refer to pagasa', 'consult pagasa', 'pagasa for', 'check with pagasa']
+                    found_external_ref = any(ref in response_lower for ref in external_refs)
+                    
+                    if found_external_ref:
+                        logger.error("❌ CRITICAL: LLM ignored RAG context and referred to external source!")
+                        logger.error(f"Response contains external reference: {response[:300]}")
+                        logger.error("This violates emergency response protocol - user needs immediate answer, not referral")
+                        
+                        # Try to extract what we can from the response before the external reference
+                        # and provide a better response
+                        # For now, log the issue - in production, could trigger retry with stronger instructions
+                        
+                        # Still return the response but log the violation
+                        # TODO: Could implement retry mechanism here with even stronger instructions
                 
                 return response.strip()
             else:

@@ -123,6 +123,8 @@ def process_single_pdf(uploaded_file, doc_title, doc_type, doc_source, doc_categ
         
         # Chunk the extracted text
         from llm.chunking import ContentChunker
+        from llama_index.core import Document
+        
         chunker = ContentChunker(chunk_size=800, chunk_overlap=100)
         
         chunks = chunker.chunk_file(
@@ -145,27 +147,42 @@ def process_single_pdf(uploaded_file, doc_title, doc_type, doc_source, doc_categ
                 "error": "No chunks created from PDF content"
             }
         
-        # Save chunks to index
-        chunks_dir = Path("knowledge_base/chunks")
-        chunks_dir.mkdir(parents=True, exist_ok=True)
+        # Convert chunks to LlamaIndex Documents and add to ChromaDB
+        import importlib
+        import llm.knowledge_base
+        importlib.reload(llm.knowledge_base)  # Force reload to avoid Streamlit cache issues
+        from llm.knowledge_base import KnowledgeBase
+        kb = KnowledgeBase()
         
-        chunk_index_file = chunks_dir / f"{Path(uploaded_file.name).stem}_chunks.json"
+        documents = []
+        for chunk in chunks:
+            # Build comprehensive metadata
+            chunk_metadata = chunk.get("metadata", {})
+            metadata = {
+                "chunk_id": chunk.get("chunk_id", ""),
+                "source": chunk.get("source", uploaded_file.name),
+                "chunk_index": chunk.get("chunk_index", -1),
+                "start_char": chunk.get("start_char", -1),
+                "end_char": chunk.get("end_char", -1),
+                "char_count": chunk.get("char_count", 0),
+                "title": chunk_metadata.get("title", doc_title),
+                "type": chunk_metadata.get("type", doc_type),
+                "category": chunk_metadata.get("category", doc_category),
+                "description": chunk_metadata.get("description", doc_description),
+                "source_url": chunk_metadata.get("source", doc_source),
+            }
+            
+            doc = Document(
+                text=chunk.get("content", ""),
+                metadata=metadata,
+                id_=chunk.get("chunk_id", None)
+            )
+            documents.append(doc)
         
-        # Use JSONL format if many chunks (more memory efficient)
-        format_type = "jsonl" if len(chunks) > 1000 else "json"
-        if format_type == "jsonl":
-            chunk_index_file = chunk_index_file.with_suffix('.jsonl')
+        # Add documents to ChromaDB
+        kb.add_documents_to_index(documents)
         
-        chunker.save_chunks(chunks, str(chunk_index_file), index_format=format_type)
-        
-        # Store relative path in metadata
-        chunk_path_str = str(chunk_index_file).replace("\\", "/")
-        if chunk_path_str.startswith("knowledge_base/"):
-            chunk_index_relative = chunk_path_str.replace("knowledge_base/", "")
-        else:
-            chunk_index_relative = f"chunks/{chunk_index_file.name}"
-        
-        # Load and update metadata
+        # Load and update metadata (no chunk_index_file needed anymore)
         metadata_file = Path("knowledge_base/metadata.json")
         metadata = {}
         if metadata_file.exists():
@@ -185,7 +202,6 @@ def process_single_pdf(uploaded_file, doc_title, doc_type, doc_source, doc_categ
             "size": uploaded_file.size,
             "uploaded_at": str(Path(file_path).stat().st_mtime),
             "extracted_text_file": extracted_text_file,
-            "chunk_index_file": chunk_index_relative,
             "chunk_count": len(chunks)
         })
         
@@ -412,6 +428,8 @@ def show_knowledge_base_page():
                             
                             # Chunk the scraped content
                             from llm.chunking import ContentChunker
+                            from llama_index.core import Document
+                            
                             chunker = ContentChunker(chunk_size=800, chunk_overlap=100)
                             
                             chunks = chunker.chunk_file(
@@ -428,33 +446,45 @@ def show_knowledge_base_page():
                             )
                             
                             if chunks:
-                                # Save chunks to index
-                                chunks_dir = Path("knowledge_base/chunks")
-                                chunks_dir.mkdir(parents=True, exist_ok=True)
+                                # Convert chunks to LlamaIndex Documents and add to ChromaDB
+                                import importlib
+                                import llm.knowledge_base
+                                importlib.reload(llm.knowledge_base)  # Force reload to avoid Streamlit cache issues
+                                from llm.knowledge_base import KnowledgeBase
+                                kb = KnowledgeBase()
                                 
-                                # Create safe filename from URL
-                                from urllib.parse import urlparse
-                                parsed = urlparse(url)
-                                safe_filename = parsed.netloc.replace('.', '_') + parsed.path.replace('/', '_')
-                                if not safe_filename or safe_filename == '_':
-                                    safe_filename = 'url_content'
+                                documents = []
+                                for chunk in chunks:
+                                    chunk_metadata = chunk.get("metadata", {})
+                                    metadata = {
+                                        "chunk_id": chunk.get("chunk_id", ""),
+                                        "source": chunk.get("source", url),
+                                        "chunk_index": chunk.get("chunk_index", -1),
+                                        "start_char": chunk.get("start_char", -1),
+                                        "end_char": chunk.get("end_char", -1),
+                                        "char_count": chunk.get("char_count", 0),
+                                        "title": chunk_metadata.get("title", url_title or url),
+                                        "type": chunk_metadata.get("type", url_type),
+                                        "category": chunk_metadata.get("category", url_category),
+                                        "description": chunk_metadata.get("description", url_description),
+                                        "source_url": chunk_metadata.get("source", url_source),
+                                        "auto_refresh": auto_refresh
+                                    }
+                                    
+                                    doc = Document(
+                                        text=chunk.get("content", ""),
+                                        metadata=metadata,
+                                        id_=chunk.get("chunk_id", None)
+                                    )
+                                    documents.append(doc)
                                 
-                                chunk_index_file = chunks_dir / f"{safe_filename}_chunks.json"
-                                chunker.save_chunks(chunks, str(chunk_index_file))
-                                
-                                # Store relative path in metadata (relative to knowledge_base directory)
-                                # Convert to string and normalize path separators
-                                chunk_path_str = str(chunk_index_file).replace("\\", "/")
-                                if chunk_path_str.startswith("knowledge_base/"):
-                                    chunk_index_relative = chunk_path_str.replace("knowledge_base/", "")
-                                else:
-                                    # Extract just the filename and subdirectory
-                                    chunk_index_relative = f"chunks/{chunk_index_file.name}"
+                                # Add documents to ChromaDB
+                                kb.add_documents_to_index(documents)
                                 
                                 status_text.text("💾 Saving metadata...")
                                 progress_bar.progress(90)
                                 
-                                # Save URL metadata
+                                # Save URL metadata (no chunk_index_file needed anymore)
                                 metadata_file = Path("knowledge_base/metadata.json")
                                 metadata = {}
                                 if metadata_file.exists():
@@ -474,7 +504,6 @@ def show_knowledge_base_page():
                                     "auto_refresh": auto_refresh,
                                     "added_at": str(Path().cwd()),
                                     "scraped_content_file": scraped_content_file,
-                                    "chunk_index_file": chunk_index_relative,
                                     "chunk_count": len(chunks)
                                 })
                                 metadata["total_documents"] = len(metadata.get("pdfs", [])) + len(metadata.get("urls", []))
@@ -534,7 +563,6 @@ def show_knowledge_base_page():
                 "source": pdf.get('source', 'N/A'),
                 "category": pdf.get('category', 'N/A'),
                 "chunk_count": pdf.get('chunk_count', 0),
-                "chunk_file": pdf.get('chunk_index_file'),
                 "metadata": pdf
             })
         for url_item in metadata.get("urls", []):
@@ -544,7 +572,6 @@ def show_knowledge_base_page():
                 "source": url_item.get('source', 'N/A'),
                 "category": url_item.get('category', 'N/A'),
                 "chunk_count": url_item.get('chunk_count', 0),
-                "chunk_file": url_item.get('chunk_index_file'),
                 "metadata": url_item
             })
         
@@ -554,7 +581,7 @@ def show_knowledge_base_page():
         
         # Document selector dropdown
         doc_options = [f"{doc['type']}: {doc['title']} ({doc['chunk_count']} chunks)" for doc in all_docs]
-        selected_doc_idx = st.selectbox("📋 Select Document to View Chunks", range(len(doc_options)), format_func=lambda x: doc_options[x], key="doc_selector")
+        selected_doc_idx = st.selectbox("📋 Select Document to View", range(len(doc_options)), format_func=lambda x: doc_options[x], key="doc_selector")
         
         selected_doc = all_docs[selected_doc_idx]
         
@@ -569,92 +596,116 @@ def show_knowledge_base_page():
         with col3:
             st.write(f"**Category:** {selected_doc['category']}")
         
-        st.write(f"**Total Chunks:** {selected_doc['chunk_count']}")
+        st.write(f"**Total Chunks:** {selected_doc['chunk_count']} (stored in ChromaDB)")
         
-        # Load and display chunks
-        if selected_doc['chunk_file']:
-            try:
-                # Handle relative paths
-                chunk_file_path = Path(selected_doc['chunk_file'])
-                if not chunk_file_path.exists():
-                    chunk_file_path = Path("knowledge_base") / selected_doc['chunk_file']
-                
-                if chunk_file_path.exists():
-                    from llm.chunking import ContentChunker
-                    chunker = ContentChunker()
-                    chunks = chunker.load_chunks(str(chunk_file_path))
-                    
-                    if chunks:
-                        st.markdown("### 📖 Knowledge Chunks")
-                        st.info(f"Showing {len(chunks)} chunks from this document. These are the knowledge pieces your agent uses for RAG.")
+        # Delete button for selected document
+        st.markdown("---")
+        st.markdown("### 🗑️ Delete Document")
+        st.warning("⚠️ **Warning:** Deleting a document will permanently remove it and all its chunks from the knowledge base. This action cannot be undone.")
+        
+        # Get identifier for deletion
+        if selected_doc['type'] == "PDF":
+            delete_identifier = selected_doc['metadata'].get('filename')
+        else:
+            delete_identifier = selected_doc['metadata'].get('url')
+        
+        # Confirmation checkbox
+        confirm_delete_key = f"confirm_delete_{selected_doc_idx}"
+        if confirm_delete_key not in st.session_state:
+            st.session_state[confirm_delete_key] = False
+        
+        confirm_delete = st.checkbox(
+            f"I understand and want to delete this {selected_doc['type']}",
+            key=f"delete_checkbox_{selected_doc_idx}",
+            value=st.session_state[confirm_delete_key]
+        )
+        st.session_state[confirm_delete_key] = confirm_delete
+        
+        # Delete button
+        delete_button_key = f"delete_btn_{selected_doc_idx}"
+        if st.button("🗑️ Delete Document", type="primary", key=delete_button_key, disabled=not confirm_delete):
+            if confirm_delete:
+                with st.spinner("Deleting document and all associated files..."):
+                    try:
+                        from llm.knowledge_base import KnowledgeBase
+                        kb = KnowledgeBase()
                         
-                        # Filter chunks by search query
-                        filtered_chunks = chunks
-                        if search_query:
-                            search_lower = search_query.lower()
-                            filtered_chunks = [
-                                chunk for chunk in chunks
-                                if search_lower in chunk.get('content', '').lower()
-                            ]
-                            st.write(f"**Filtered:** {len(filtered_chunks)} chunks match '{search_query}'")
-                        
-                        # Chunk display options
-                        display_mode = st.radio(
-                            "Display Mode",
-                            ["All Chunks", "First 10", "Last 10", "Search Results Only"],
-                            key="chunk_display_mode"
+                        result = kb.delete_document(
+                            document_type=selected_doc['type'].lower(),
+                            identifier=delete_identifier
                         )
                         
-                        chunks_to_show = filtered_chunks
-                        if display_mode == "First 10":
-                            chunks_to_show = filtered_chunks[:10]
-                        elif display_mode == "Last 10":
-                            chunks_to_show = filtered_chunks[-10:]
-                        elif display_mode == "Search Results Only" and search_query:
-                            chunks_to_show = filtered_chunks
-                        
-                        # Display chunks
-                        for idx, chunk in enumerate(chunks_to_show, 1):
-                            chunk_id = chunk.get('chunk_id', f'chunk_{idx}')
-                            chunk_content = chunk.get('content', '')
-                            chunk_position = chunk.get('position', idx)
-                            chunk_metadata = chunk.get('metadata', {})
+                        if result["success"]:
+                            st.success(f"✅ {result['message']}")
+                            if result.get("deleted_files"):
+                                with st.expander("📋 Deleted Files"):
+                                    for file_path in result["deleted_files"]:
+                                        st.write(f"  - `{file_path}`")
                             
-                            with st.expander(f"📄 Chunk {chunk_position}: {chunk_id[:50]}..."):
-                                st.markdown(f"**Chunk ID:** `{chunk_id}`")
-                                st.markdown(f"**Position:** {chunk_position}")
-                                
-                                if chunk_metadata:
-                                    st.markdown("**Metadata:**")
-                                    for key, value in chunk_metadata.items():
-                                        st.write(f"  - {key}: {value}")
-                                
-                                st.markdown("**Content:**")
-                                st.text_area(
-                                    "",
-                                    value=chunk_content,
-                                    height=150,
-                                    key=f"chunk_content_{idx}",
-                                    disabled=True,
-                                    label_visibility="collapsed"
-                                )
-                                
-                                # Show chunk stats
-                                word_count = len(chunk_content.split())
-                                char_count = len(chunk_content)
-                                st.caption(f"📊 {word_count} words, {char_count} characters")
-                        
-                        if len(chunks_to_show) < len(filtered_chunks):
-                            st.info(f"Showing {len(chunks_to_show)} of {len(filtered_chunks)} chunks. Use display mode to see more.")
-                    else:
-                        st.warning("⚠️ No chunks found in this document.")
+                            if result.get("warnings"):
+                                st.warning("⚠️ Some warnings occurred:")
+                                for warning in result["warnings"]:
+                                    st.write(f"  - {warning}")
+                            
+                            # Clear confirmation state
+                            st.session_state[confirm_delete_key] = False
+                            # Auto-refresh to show updated knowledge base
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {result['message']}")
+                    except Exception as e:
+                        st.error(f"❌ Error deleting document: {e}")
+                        logger.error(f"Error deleting document: {e}", exc_info=True)
+            else:
+                st.warning("Please confirm deletion by checking the checkbox.")
+        
+        st.markdown("---")
+        
+        # Display document info and search capabilities
+        st.markdown("### 📖 Document Content")
+        st.info(f"This document has {selected_doc['chunk_count']} chunks stored in ChromaDB vector database.")
+        st.info("💡 **Note:** Chunks are now stored in ChromaDB for semantic search. Use the search box above to query the vector database.")
+        
+        # Semantic search for this document
+        if search_query:
+            st.markdown("### 🔍 Semantic Search Results")
+            try:
+                from llm.knowledge_base import KnowledgeBase
+                kb = KnowledgeBase()
+                
+                # Add document filter to query
+                doc_filter_query = f"{search_query} {selected_doc['title']}"
+                results = kb.get_relevant_content(doc_filter_query, max_results=5)
+                
+                # Filter results to this document
+                doc_results = [
+                    r for r in results 
+                    if r.get('source') == selected_doc['metadata'].get('filename') or 
+                       r.get('source') == selected_doc['metadata'].get('url')
+                ]
+                
+                if doc_results:
+                    st.success(f"Found {len(doc_results)} relevant chunks for '{search_query}'")
+                    for idx, result in enumerate(doc_results, 1):
+                        with st.expander(f"📄 Result {idx} (Score: {result.get('score', 0):.4f})"):
+                            st.markdown(f"**Source:** {result.get('source', 'Unknown')}")
+                            st.markdown(f"**Title:** {result.get('title', 'Unknown')}")
+                            st.markdown("**Content:**")
+                            st.text_area(
+                                "",
+                                value=result.get('content', ''),
+                                height=150,
+                                key=f"search_result_{idx}",
+                                disabled=True,
+                                label_visibility="collapsed"
+                            )
                 else:
-                    st.error(f"❌ Chunk file not found: {chunk_file_path}")
+                    st.info(f"No chunks found matching '{search_query}' in this document.")
             except Exception as e:
-                st.error(f"❌ Error loading chunks: {e}")
-                logger.error(f"Error loading chunks: {e}", exc_info=True)
+                st.error(f"❌ Error searching ChromaDB: {e}")
+                logger.error(f"Error searching ChromaDB: {e}", exc_info=True)
         else:
-            st.warning("⚠️ No chunk file specified for this document.")
+            st.info("💡 Enter a search query above to find relevant chunks from this document.")
         
         # Show all documents summary
         st.markdown("---")
@@ -666,7 +717,8 @@ def show_knowledge_base_page():
             st.subheader("📄 PDFs")
             pdfs = metadata.get("pdfs", [])
             if pdfs:
-                for pdf in pdfs:
+                for idx, pdf in enumerate(pdfs):
+                    pdf_key = f"pdf_{idx}"
                     with st.expander(f"📄 {pdf.get('title', pdf.get('filename', 'Unknown'))}"):
                         st.write(f"**Source:** {pdf.get('source', 'N/A')}")
                         st.write(f"**Type:** {pdf.get('type', 'N/A')}")
@@ -674,6 +726,40 @@ def show_knowledge_base_page():
                         st.write(f"**Chunks:** {pdf.get('chunk_count', 0)}")
                         if pdf.get('description'):
                             st.write(f"**Description:** {pdf.get('description')}")
+                        
+                        # Delete button for PDF
+                        st.markdown("---")
+                        pdf_confirm_key = f"pdf_confirm_{idx}"
+                        if pdf_confirm_key not in st.session_state:
+                            st.session_state[pdf_confirm_key] = False
+                        
+                        pdf_confirm = st.checkbox(
+                            "Confirm deletion",
+                            key=f"pdf_delete_check_{idx}",
+                            value=st.session_state[pdf_confirm_key]
+                        )
+                        st.session_state[pdf_confirm_key] = pdf_confirm
+                        
+                        if st.button("🗑️ Delete PDF", key=f"pdf_delete_btn_{idx}", disabled=not pdf_confirm):
+                            if pdf_confirm:
+                                with st.spinner("Deleting PDF and all associated files..."):
+                                    try:
+                                        from llm.knowledge_base import KnowledgeBase
+                                        kb = KnowledgeBase()
+                                        
+                                        result = kb.delete_document(
+                                            document_type="pdf",
+                                            identifier=pdf.get('filename')
+                                        )
+                                        
+                                        if result["success"]:
+                                            st.success(f"✅ {result['message']}")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ {result['message']}")
+                                    except Exception as e:
+                                        st.error(f"❌ Error deleting PDF: {e}")
+                                        logger.error(f"Error deleting PDF: {e}", exc_info=True)
             else:
                 st.info("No PDFs uploaded yet")
         
@@ -681,7 +767,8 @@ def show_knowledge_base_page():
             st.subheader("🔗 URLs")
             urls = metadata.get("urls", [])
             if urls:
-                for url_item in urls:
+                for idx, url_item in enumerate(urls):
+                    url_key = f"url_{idx}"
                     with st.expander(f"🔗 {url_item.get('title', url_item.get('url', 'Unknown'))}"):
                         st.write(f"**URL:** {url_item.get('url')}")
                         st.write(f"**Source:** {url_item.get('source', 'N/A')}")
@@ -690,6 +777,40 @@ def show_knowledge_base_page():
                         st.write(f"**Chunks:** {url_item.get('chunk_count', 0)}")
                         if url_item.get('description'):
                             st.write(f"**Description:** {url_item.get('description')}")
+                        
+                        # Delete button for URL
+                        st.markdown("---")
+                        url_confirm_key = f"url_confirm_{idx}"
+                        if url_confirm_key not in st.session_state:
+                            st.session_state[url_confirm_key] = False
+                        
+                        url_confirm = st.checkbox(
+                            "Confirm deletion",
+                            key=f"url_delete_check_{idx}",
+                            value=st.session_state[url_confirm_key]
+                        )
+                        st.session_state[url_confirm_key] = url_confirm
+                        
+                        if st.button("🗑️ Delete URL", key=f"url_delete_btn_{idx}", disabled=not url_confirm):
+                            if url_confirm:
+                                with st.spinner("Deleting URL and all associated files..."):
+                                    try:
+                                        from llm.knowledge_base import KnowledgeBase
+                                        kb = KnowledgeBase()
+                                        
+                                        result = kb.delete_document(
+                                            document_type="url",
+                                            identifier=url_item.get('url')
+                                        )
+                                        
+                                        if result["success"]:
+                                            st.success(f"✅ {result['message']}")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ {result['message']}")
+                                    except Exception as e:
+                                        st.error(f"❌ Error deleting URL: {e}")
+                                        logger.error(f"Error deleting URL: {e}", exc_info=True)
             else:
                 st.info("No URLs added yet")
 

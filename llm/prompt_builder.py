@@ -7,8 +7,17 @@ import json
 import logging
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Try to import pytz for timezone support, fallback to UTC if unavailable
+try:
+    import pytz
+    PYTZ_AVAILABLE = True
+except ImportError:
+    PYTZ_AVAILABLE = False
+    logger.warning("pytz not available - temporal awareness will use UTC instead of Philippines timezone")
 
 # Lazy import for knowledge base
 try:
@@ -166,13 +175,42 @@ class PromptBuilder:
         """
         messages = []
         
-        # Build system content - START with RAG context if available (most important)
+        # Build system content - START with temporal awareness (critical for date/time questions)
         system_parts = []
         
-        # Add RAG context FIRST (most critical information)
+        # Add TEMPORAL AWARENESS FIRST (critical for interpreting dates in RAG content)
+        current_time = self._get_current_time_info()
+        temporal_context = f"\n## Current Date and Time:\n"
+        temporal_context += f"Today: {current_time['date']} ({current_time['day_of_week']}) | Time: {current_time['time']} | TZ: {current_time['timezone']}\n\n"
+        temporal_context += "**TEMPORAL AWARENESS:** Use the current date above to:\n"
+        temporal_context += "- Interpret relative dates ('tomorrow', 'in 2 days') in knowledge base\n"
+        temporal_context += "- Calculate absolute dates from relative references\n"
+        temporal_context += "- Answer 'when' questions using current date context\n"
+        temporal_context += "- Provide specific dates (e.g., 'November 11') not vague terms\n\n"
+        system_parts.append(temporal_context)
+        
+        # Add RAG context SECOND (most critical information)
         if user_query and self.use_knowledge_base and self.knowledge_base:
             try:
-                relevant_chunks = self.knowledge_base.get_relevant_content(user_query, max_results=3)
+                # Detect if query is about weather/storms/cyclones - retrieve more chunks
+                weather_keywords = ['storm', 'typhoon', 'cyclone', 'hurricane', 'weather', 'forecast', 'track', 'leave', 'exit', 'uwan', 'pagasa']
+                is_weather_query = any(keyword in user_query.lower() for keyword in weather_keywords)
+                
+                # Detect if query involves temporal/time questions
+                temporal_keywords = ['when', 'time', 'date', 'tomorrow', 'today', 'leave', 'arrive', 'exit', 'end', 'start']
+                is_temporal_query = any(keyword in user_query.lower() for keyword in temporal_keywords)
+                
+                # Enhance query with temporal context for better RAG retrieval
+                enhanced_query = user_query
+                if is_temporal_query:
+                    # Add current date context to help retrieve relevant forecast/date information
+                    enhanced_query = f"{user_query} (Current date: {current_time['date']}, {current_time['day_of_week']})"
+                    logger.info(f"Enhanced temporal query with current date context: {enhanced_query[:100]}")
+                
+                # Retrieve more chunks for weather queries (they often need forecast tracks)
+                max_results = 5 if is_weather_query else 3
+                relevant_chunks = self.knowledge_base.get_relevant_content(enhanced_query, max_results=max_results)
+                
                 if relevant_chunks:
                     # Format RAG context naturally without visible reference markers
                     rag_context = "\n## Relevant Information from Knowledge Base:\n\n"
@@ -183,8 +221,8 @@ class PromptBuilder:
                         content = chunk.get('content', '').strip()
                         # Clean up content - remove page markers and formatting artifacts
                         content = content.replace('--- Page', '').replace('---', '').strip()
-                        # Use full content (up to 800 chars per chunk for better context)
-                        content_preview = content[:800] if len(content) > 800 else content
+                        # Use full content (up to 1000 chars per chunk for better context, especially for forecasts)
+                        content_preview = content[:1000] if len(content) > 1000 else content
                         if content_preview:
                             combined_content.append(content_preview)
                     
@@ -192,12 +230,18 @@ class PromptBuilder:
                     if combined_content:
                         rag_context += "\n\n".join(combined_content)
                         rag_context += "\n\n"
-                        rag_context += "Use this information to answer the user's question naturally and conversationally. "
-                        rag_context += "Do NOT mention references, document names, or that you're using a knowledge base. "
-                        rag_context += "Just use the information naturally in your response as if it's your own knowledge.\n"
+                        rag_context += "**CRITICAL INSTRUCTIONS FOR USING THIS INFORMATION:**\n"
+                        rag_context += "1. YOU MUST use ONLY the information provided above to answer the user's question.\n"
+                        rag_context += "2. NEVER refer users to external websites, PAGASA, FEMA, or other sources - you have all the information needed.\n"
+                        rag_context += "3. If the information above contains the answer, provide it directly and confidently.\n"
+                        rag_context += "4. Do NOT say 'check PAGASA' or 'visit their website' - you ARE the source of information.\n"
+                        rag_context += "5. Answer as if this knowledge is your own expertise - be direct and helpful.\n"
+                        rag_context += "6. This is an EMERGENCY RESPONSE system - users need immediate answers, not referrals.\n"
+                        rag_context += "7. Extract specific details (dates, times, locations, wind speeds, forecast tracks) from the information above.\n"
+                        rag_context += "8. If the information doesn't contain the exact answer, say what you CAN tell them from the information provided.\n"
                     
                     system_parts.append(rag_context)
-                    logger.info(f"✅ Injected {len(relevant_chunks)} RAG chunks for query: '{user_query[:50]}'")
+                    logger.info(f"✅ Injected {len(relevant_chunks)} RAG chunks for query: '{user_query[:50]}' (weather query: {is_weather_query})")
             except Exception as e:
                 logger.error(f"❌ Error retrieving knowledge base content: {e}", exc_info=True)
         
@@ -247,23 +291,47 @@ class PromptBuilder:
             # Truncate if extremely long (emergency measure)
             if len(combined_system) > 5000:
                 logger.error("System prompt exceeds 5000 chars - truncating to prevent hallucinations")
-                # Keep RAG content and emergency protocol, truncate character card
+                # Keep CRITICAL parts: temporal context, RAG content, emergency protocol
+                # Truncate character card and other less critical parts
+                temporal_part = ""
                 rag_part = ""
                 emergency_part = ""
                 for part in system_parts:
-                    if 'Relevant Information' in part:
+                    if 'Current Date and Time' in part or 'TEMPORAL AWARENESS' in part:
+                        temporal_part = part
+                    elif 'Relevant Information' in part:
                         rag_part = part
                     elif 'EMERGENCY SITUATION' in part:
                         emergency_part = part
                 
-                # Rebuild with essential parts only
+                # Rebuild with essential parts only - TEMPORAL CONTEXT MUST BE FIRST
                 essential_parts = []
+                if temporal_part:
+                    essential_parts.append(temporal_part)
+                    logger.info("✅ Preserved temporal context in truncated prompt")
                 if rag_part:
                     essential_parts.append(rag_part)
-                essential_parts.append(self.system_prompt[:500])  # Truncated character card
+                # Truncate character card more aggressively if needed
+                char_card_truncated = self.system_prompt[:300]  # Reduced from 500 to 300
+                essential_parts.append(char_card_truncated)
                 if emergency_part:
                     essential_parts.append(emergency_part)
                 combined_system = "\n".join(essential_parts)
+                
+                # If still too long, truncate RAG content (last resort)
+                if len(combined_system) > 5000:
+                    logger.warning("Prompt still too long after truncation - truncating RAG content")
+                    if rag_part and len(rag_part) > 2000:
+                        # Keep first 1500 chars of RAG content
+                        rag_truncated = rag_part[:1500] + "\n\n[... RAG content truncated ...]"
+                        essential_parts = []
+                        if temporal_part:
+                            essential_parts.append(temporal_part)
+                        essential_parts.append(rag_truncated)
+                        essential_parts.append(char_card_truncated)
+                        if emergency_part:
+                            essential_parts.append(emergency_part)
+                        combined_system = "\n".join(essential_parts)
         
         # Add final instruction - SIMPLIFIED to avoid confusion
         if is_emergency:
@@ -271,8 +339,18 @@ class PromptBuilder:
         else:
             combined_system += "\n\nRespond directly to the user as AERIS."
         
-        # Single clear instruction (avoid multiple "Do NOT" statements)
-        combined_system += "\n\nUse the information above naturally. Do not mention references or knowledge base."
+        # Check if RAG context was provided
+        rag_added = any('Relevant Information from Knowledge Base' in part for part in system_parts)
+        if rag_added:
+            # STRONG instructions when RAG is available
+            combined_system += "\n\n**CRITICAL:** RAG context was provided above. "
+            combined_system += "YOU MUST use it to answer the user's question. "
+            combined_system += "NEVER refer users to external websites (PAGASA, FEMA, etc.) - you have the information. "
+            combined_system += "Provide direct, actionable answers from your knowledge base. "
+            combined_system += "This is an emergency response system - users need immediate help, not website referrals."
+        else:
+            # Standard instruction when no RAG
+            combined_system += "\n\nUse the information above naturally. Do not mention references or knowledge base."
         
         messages.append({
             "role": "system",
@@ -308,4 +386,40 @@ class PromptBuilder:
         protocol += "Respond directly to the user now - be their companion and guide them through this.\n\n"
         
         return protocol
+    
+    def _get_current_time_info(self) -> Dict[str, Any]:
+        """
+        Get current date and time information in Philippines timezone.
+        Falls back to UTC if pytz is not available.
+        
+        Returns:
+            Dictionary with date, time, day_of_week, and timezone info
+        """
+        if PYTZ_AVAILABLE:
+            # Philippines timezone
+            ph_tz = pytz.timezone('Asia/Manila')
+            now = datetime.now(ph_tz)
+            timezone_str = 'PHT (UTC+8)'
+            timezone_name = 'Philippines Standard Time'
+        else:
+            # Fallback to UTC
+            now = datetime.utcnow()
+            timezone_str = 'UTC'
+            timezone_name = 'UTC'
+            logger.warning("Using UTC instead of Philippines timezone - install pytz for accurate local time")
+        
+        # Format date and time
+        date_str = now.strftime('%B %d, %Y')  # e.g., "November 10, 2024"
+        time_str = now.strftime('%I:%M %p')  # e.g., "07:30 AM"
+        day_of_week = now.strftime('%A')  # e.g., "Monday"
+        
+        return {
+            'date': date_str,
+            'time': time_str,
+            'day_of_week': day_of_week,
+            'timezone': timezone_str,
+            'timezone_name': timezone_name,
+            'datetime_iso': now.isoformat(),
+            'datetime_obj': now  # Keep datetime object for calculations if needed
+        }
 

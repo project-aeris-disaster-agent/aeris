@@ -63,7 +63,7 @@
 1. Check if bot process is running: `Get-Process python`
 2. Check logs for errors
 3. Verify `.env` has correct `TELEGRAM_BOT_TOKEN`
-4. Check `OPENROUTER_API_KEY` is set
+4. Check `OPENAI_API_KEY` is set
 
 ### Streamlit Not Loading?
 1. Check if process is running

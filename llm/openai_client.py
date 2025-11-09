@@ -1,6 +1,6 @@
 """
-OpenRouter API client for LLM integration.
-See SPEC.md Section 2.2 and 4.1.4 for OpenRouter details.
+OpenAI API client for LLM integration.
+Replaces OpenRouter integration with direct OpenAI API access.
 """
 
 import os
@@ -12,28 +12,27 @@ from utils.helpers import get_env
 logger = logging.getLogger(__name__)
 
 
-class OpenRouterClient:
+class OpenAIClient:
     """
-    Client for OpenRouter API integration.
-    Supports multiple models and conversation management.
+    Client for OpenAI API integration.
+    Supports OpenAI models (gpt-4o, gpt-4o-mini, gpt-4-turbo, etc.)
     """
     
     def __init__(self):
-        """Initialize OpenRouter client."""
-        self.api_key = get_env("OPENROUTER_API_KEY", required=True)
-        self.api_url = "https://openrouter.ai/api/v1/chat/completions"
-        self.default_model = get_env("OPENROUTER_MODEL", default="openai/gpt-4o-mini")
+        """Initialize OpenAI client."""
+        self.api_key = get_env("OPENAI_API_KEY", required=True)
+        self.api_url = "https://api.openai.com/v1/chat/completions"
+        self.default_model = get_env("OPENAI_MODEL", default="gpt-4o-mini")
         
         self.client = httpx.AsyncClient(
             timeout=60.0,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
-                "HTTP-Referer": get_env("OPENROUTER_REFERER", default="https://github.com/disaster-response-bot"),
-                "X-Title": "Disaster Response Bot"
+                "Content-Type": "application/json"
             }
         )
         
-        logger.info(f"OpenRouter client initialized with model: {self.default_model}")
+        logger.info(f"OpenAI client initialized with model: {self.default_model}")
     
     async def chat(
         self,
@@ -44,7 +43,7 @@ class OpenRouterClient:
         **kwargs
     ) -> Optional[str]:
         """
-        Send chat completion request to OpenRouter.
+        Send chat completion request to OpenAI.
         
         Args:
             messages: List of message dicts with 'role' and 'content'
@@ -69,7 +68,7 @@ class OpenRouterClient:
             payload["max_tokens"] = max_tokens
         
         try:
-            logger.debug(f"Sending request to OpenRouter: model={model}, messages={len(messages)}")
+            logger.debug(f"Sending request to OpenAI: model={model}, messages={len(messages)}")
             
             response = await self.client.post(self.api_url, json=payload)
             response.raise_for_status()
@@ -79,22 +78,22 @@ class OpenRouterClient:
             # Extract response text
             if "choices" in data and len(data["choices"]) > 0:
                 content = data["choices"][0]["message"]["content"]
-                logger.debug(f"Received response from OpenRouter: {len(content)} chars")
+                logger.debug(f"Received response from OpenAI: {len(content)} chars")
                 return content
             else:
-                logger.error(f"No choices in OpenRouter response: {data}")
+                logger.error(f"No choices in OpenAI response: {data}")
                 return None
                 
         except httpx.HTTPStatusError as e:
-            logger.error(f"OpenRouter API error: {e.response.status_code} - {e.response.text}")
+            logger.error(f"OpenAI API error: {e.response.status_code} - {e.response.text}")
             return None
         except Exception as e:
-            logger.error(f"Error calling OpenRouter API: {e}", exc_info=True)
+            logger.error(f"Error calling OpenAI API: {e}", exc_info=True)
             return None
     
     async def test_connection(self) -> bool:
         """
-        Test OpenRouter API connection.
+        Test OpenAI API connection.
         
         Returns:
             True if connection successful, False otherwise
@@ -107,14 +106,14 @@ class OpenRouterClient:
             response = await self.chat(test_messages, temperature=0.1)
             
             if response and "test" in response.lower():
-                logger.info("OpenRouter connection test successful")
+                logger.info("OpenAI connection test successful")
                 return True
             else:
-                logger.warning(f"OpenRouter test returned unexpected response: {response}")
+                logger.warning(f"OpenAI test returned unexpected response: {response}")
                 return False
                 
         except Exception as e:
-            logger.error(f"OpenRouter connection test failed: {e}")
+            logger.error(f"OpenAI connection test failed: {e}")
             return False
     
     async def close(self):
