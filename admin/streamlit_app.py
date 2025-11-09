@@ -113,22 +113,24 @@ def show_knowledge_base_page():
             # Metadata inputs
             col1, col2 = st.columns(2)
             with col1:
-                doc_title = st.text_input("Document Title", value=uploaded_file.name)
+                doc_title = st.text_input("Document Title", value=uploaded_file.name, key="pdf_title")
                 doc_type = st.selectbox(
                     "Document Type",
-                    ["Protocol", "Procedure", "Guide", "Reference", "Other"]
+                    ["Protocol", "Procedure", "Guide", "Reference", "Other"],
+                    key="pdf_type"
                 )
             with col2:
-                doc_source = st.text_input("Source/Organization", placeholder="e.g., FEMA, Red Cross")
+                doc_source = st.text_input("Source/Organization", placeholder="e.g., FEMA, Red Cross", key="pdf_source")
                 doc_category = st.selectbox(
                     "Category",
-                    ["Emergency Response", "Evacuation", "Shelter", "Medical", "Family Reunification", "Other"]
+                    ["Emergency Response", "Evacuation", "Shelter", "Medical", "Family Reunification", "Other"],
+                    key="pdf_category"
                 )
             
-            doc_description = st.text_area("Description (optional)", placeholder="Brief description of the document content")
+            doc_description = st.text_area("Description (optional)", placeholder="Brief description of the document content", key="pdf_description")
             
             # Process button
-            if st.button("📥 Process and Add to Knowledge Base", type="primary"):
+            if st.button("📥 Process and Add to Knowledge Base", type="primary", key="pdf_process_btn"):
                 with st.spinner("Processing PDF..."):
                     try:
                         # Save PDF
@@ -160,32 +162,68 @@ def show_knowledge_base_page():
                             status_text.text("✂️ Chunking content...")
                             progress_bar.progress(60)
                             
-                            # Chunk the extracted text
-                            from llm.chunking import ContentChunker
-                            chunker = ContentChunker(chunk_size=800, chunk_overlap=100)
-                            
-                            chunks = chunker.chunk_file(
-                                extracted_text_file,
-                                source=uploaded_file.name,
-                                metadata={
-                                    "title": doc_title,
-                                    "type": doc_type,
-                                    "source": doc_source,
-                                    "category": doc_category,
-                                    "description": doc_description
-                                }
-                            )
-                            
-                            if chunks:
-                                # Save chunks to index
+                            try:
+                                # Chunk the extracted text
+                                from llm.chunking import ContentChunker
+                                chunker = ContentChunker(chunk_size=800, chunk_overlap=100)
+                                
+                                # Check file size first
+                                text_file_path = Path(extracted_text_file)
+                                if text_file_path.exists():
+                                    file_size = text_file_path.stat().st_size
+                                    status_text.text(f"✂️ Chunking content... (File size: {file_size:,} bytes)")
+                                
+                                chunks = chunker.chunk_file(
+                                    extracted_text_file,
+                                    source=uploaded_file.name,
+                                    metadata={
+                                        "title": doc_title,
+                                        "type": doc_type,
+                                        "source": doc_source,
+                                        "category": doc_category,
+                                        "description": doc_description
+                                    }
+                                )
+                                
+                                if not chunks:
+                                    st.warning("⚠️ No chunks created from PDF content.")
+                                    progress_bar.progress(100)
+                                    status_text.empty()
+                                    return
+                                
+                                status_text.text(f"💾 Saving {len(chunks)} chunks...")
+                                progress_bar.progress(75)
+                                
+                                # Save chunks to index (use JSONL for large files)
                                 chunks_dir = Path("knowledge_base/chunks")
                                 chunks_dir.mkdir(parents=True, exist_ok=True)
                                 
                                 chunk_index_file = chunks_dir / f"{Path(uploaded_file.name).stem}_chunks.json"
-                                chunker.save_chunks(chunks, str(chunk_index_file))
                                 
-                                # Store relative path in metadata
-                                chunk_index_relative = str(chunk_index_file.relative_to(Path("knowledge_base").resolve()))
+                                # Use JSONL format if many chunks (more memory efficient)
+                                format_type = "jsonl" if len(chunks) > 1000 else "json"
+                                if format_type == "jsonl":
+                                    chunk_index_file = chunk_index_file.with_suffix('.jsonl')
+                                
+                                chunker.save_chunks(chunks, str(chunk_index_file), index_format=format_type)
+                                
+                            except Exception as chunk_error:
+                                st.error(f"❌ Error during chunking: {chunk_error}")
+                                logger.error(f"Chunking error: {chunk_error}", exc_info=True)
+                                progress_bar.progress(100)
+                                status_text.empty()
+                                return
+                            
+                            if chunks:
+                                
+                                # Store relative path in metadata (relative to knowledge_base directory)
+                                # Convert to string and normalize path separators
+                                chunk_path_str = str(chunk_index_file).replace("\\", "/")
+                                if chunk_path_str.startswith("knowledge_base/"):
+                                    chunk_index_relative = chunk_path_str.replace("knowledge_base/", "")
+                                else:
+                                    # Extract just the filename and subdirectory
+                                    chunk_index_relative = f"chunks/{chunk_index_file.name}"
                                 
                                 status_text.text("💾 Saving metadata...")
                                 progress_bar.progress(90)
@@ -234,26 +272,28 @@ def show_knowledge_base_page():
         st.subheader("Add URL Source")
         st.markdown("Add URLs to scrape and ingest disaster response information.")
         
-        url = st.text_input("URL", placeholder="https://example.com/disaster-guide")
-        url_title = st.text_input("Title (optional)", placeholder="Leave empty to auto-detect")
+        url = st.text_input("URL", placeholder="https://example.com/disaster-guide", key="url_input")
+        url_title = st.text_input("Title (optional)", placeholder="Leave empty to auto-detect", key="url_title")
         
         col1, col2 = st.columns(2)
         with col1:
-            url_source = st.text_input("Source/Organization", placeholder="e.g., FEMA, Red Cross")
+            url_source = st.text_input("Source/Organization", placeholder="e.g., FEMA, Red Cross", key="url_source")
             url_category = st.selectbox(
                 "Category",
-                ["Emergency Response", "Evacuation", "Shelter", "Medical", "News", "Other"]
+                ["Emergency Response", "Evacuation", "Shelter", "Medical", "News", "Other"],
+                key="url_category"
             )
         with col2:
             url_type = st.selectbox(
                 "Content Type",
-                ["Official Guide", "News Article", "Resource Page", "Documentation", "Other"]
+                ["Official Guide", "News Article", "Resource Page", "Documentation", "Other"],
+                key="url_type"
             )
-            auto_refresh = st.checkbox("Auto-refresh", help="Periodically check for updates")
+            auto_refresh = st.checkbox("Auto-refresh", help="Periodically check for updates", key="url_auto_refresh")
         
-        url_description = st.text_area("Description (optional)", placeholder="What information does this URL contain?")
+        url_description = st.text_area("Description (optional)", placeholder="What information does this URL contain?", key="url_description")
         
-        if st.button("🔗 Add URL to Knowledge Base", type="primary"):
+        if st.button("🔗 Add URL to Knowledge Base", type="primary", key="url_add_btn"):
             if url:
                 with st.spinner("Adding URL..."):
                     try:
@@ -310,8 +350,14 @@ def show_knowledge_base_page():
                                 chunk_index_file = chunks_dir / f"{safe_filename}_chunks.json"
                                 chunker.save_chunks(chunks, str(chunk_index_file))
                                 
-                                # Store relative path in metadata
-                                chunk_index_relative = str(chunk_index_file.relative_to(Path("knowledge_base").resolve()))
+                                # Store relative path in metadata (relative to knowledge_base directory)
+                                # Convert to string and normalize path separators
+                                chunk_path_str = str(chunk_index_file).replace("\\", "/")
+                                if chunk_path_str.startswith("knowledge_base/"):
+                                    chunk_index_relative = chunk_path_str.replace("knowledge_base/", "")
+                                else:
+                                    # Extract just the filename and subdirectory
+                                    chunk_index_relative = f"chunks/{chunk_index_file.name}"
                                 
                                 status_text.text("💾 Saving metadata...")
                                 progress_bar.progress(90)

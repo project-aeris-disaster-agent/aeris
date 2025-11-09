@@ -1,97 +1,125 @@
-# Local Testing Guide - Phase 1
+# Testing Guide - AERIS Bot & Streamlit Admin
 
-## Bot is Running! 🚀
+## Services Status
 
-Your Disaster Response Telegram Bot is now running locally.
+✅ **Telegram Bot**: Running (check logs for status)
+✅ **Streamlit Admin**: Running at http://localhost:8501
 
-### How to Test
+## How to Test
 
-1. **Open Telegram** on your phone or desktop
-2. **Search for your bot**: @AgentAeries_bot
-3. **Start a conversation** by clicking "Start" or sending `/start`
+### 1. Test Telegram Bot
 
-### Test Commands
+**Option A: Direct Message**
+1. Open Telegram
+2. Search for your bot: `@AgentAeries_bot` or `@agent_aeris`
+3. Send test message: `/start`
+4. Send emergency test: `"no, im in an abandooned building, with no electricity, its flooded outside and water is rising. i need rescue"`
 
-Try these commands in order:
+**Option B: Group Chat**
+1. Add `@agent_aeris` to a group
+2. Mention the bot: `@agent_aeris help me`
+3. Send emergency message
 
-#### 1. `/start` Command
+### 2. Test Streamlit Admin
+
+1. Open browser: http://localhost:8501
+2. Enter admin password (from `.env` file, default: `6666`)
+3. Navigate to "Knowledge Base" section
+4. Upload a PDF or add a URL
+5. Verify it appears in the knowledge base
+
+### 3. Monitor Logs
+
+**Bot Logs**: Check terminal where `main.py` is running
+- Look for: "Building prompt for query"
+- Look for: "✅ RAG context injected"
+- Look for: "LLM response received"
+- Watch for: "⚠️ HALLUCINATION DETECTED" (should retry automatically)
+
+**Streamlit Logs**: Check terminal where `run_admin.py` is running
+- Look for: "You can now view your Streamlit app"
+- Check for any errors
+
+## What to Check
+
+### ✅ Good Response Indicators:
+- Response addresses the emergency
+- Asks for location
+- Provides actionable steps
+- Uses RAG knowledge naturally
+- No repetitive content
+- No reference markers (`[REFERENCE X]`)
+
+### ❌ Bad Response Indicators:
+- Repetitive content ("house on the moon" repeated)
+- Completely unrelated to query
+- Contains reference markers
+- Generic lists without action
+- Too short or nonsensical
+
+## Troubleshooting
+
+### Bot Not Responding?
+1. Check if bot process is running: `Get-Process python`
+2. Check logs for errors
+3. Verify `.env` has correct `TELEGRAM_BOT_TOKEN`
+4. Check `OPENROUTER_API_KEY` is set
+
+### Streamlit Not Loading?
+1. Check if process is running
+2. Try: http://localhost:8502 (if 8501 is busy)
+3. Check logs for port conflicts
+4. Verify `ADMIN_SECRET_KEY` is set in `.env`
+
+### Hallucination Still Happening?
+1. Check prompt length in logs (should be <3000 chars)
+2. Verify RAG context is being injected
+3. Check if emergency detection is working
+4. Look for retry messages in logs
+
+## Quick Commands
+
+**Stop Both Services:**
+```powershell
+Get-Process python | Where-Object {$_.Path -like "*06 AERIS*"} | Stop-Process
+```
+
+**Restart Both:**
+```powershell
+python run_all.py
+```
+
+**Check Logs:**
+- Bot: Look at terminal output
+- Streamlit: Check browser console (F12)
+
+## Test Scenarios
+
+### Scenario 1: Emergency Rescue
+**Message**: "no, im in an abandooned building, with no electricity, its flooded outside and water is rising. i need rescue"
+
 **Expected Response:**
-```
-👋 Welcome to the Disaster Response Bot!
+- Empathetic opening
+- Asks for exact location
+- Provides immediate safety steps
+- Uses RAG knowledge about floods
+- Collects contact information
+- Stays hopeful and supportive
 
-I'm here to help during disaster situations. I can provide:
-• Emergency announcements and updates
-• Latest news and information
-• Accurate data from trusted sources
-• Emergency assistance guidance
-• Emotional support and de-escalation
-• Financial assistance navigation
-• Family finder services
-
-Type /help for more information or just start chatting!
-```
-
-#### 2. `/help` Command
-**Expected Response:**
-```
-📋 Available Commands:
-
-/start - Start the bot
-/help - Show this help message
-/news - Get latest disaster-related news
-/reset - Reset your session
-
-You can also chat with me naturally, and I'll do my best to help!
-```
-
-#### 3. Regular Message
-Send any regular message like: "Hello" or "What can you do?"
+### Scenario 2: General Question
+**Message**: "What's the weather like?"
 
 **Expected Response:**
-```
-I received your message: "Hello"
+- Acknowledges question
+- Uses RAG knowledge if available
+- Asks about location if needed
+- Provides helpful information
 
-I'm currently in Phase 1 setup. In Phase 2, I'll be able to 
-provide intelligent responses using AI. For now, I can help with 
-basic commands. Type /help to see what I can do!
-```
+### Scenario 3: Panic/De-escalation
+**Message**: "I'm panicking! Everything is falling apart!"
 
-#### 4. `/reset` Command
 **Expected Response:**
-```
-✅ Your session has been reset. How can I help you?
-```
-
-#### 5. `/news` Command
-**Expected Response:**
-```
-📰 News feature coming soon!
-
-In Phase 2, I'll be able to fetch real-time disaster news 
-from multiple sources including Twitter/X via GROK API.
-```
-
-### What to Check
-
-✅ **Bot responds immediately** (within 1-2 seconds)
-✅ **Commands work correctly**
-✅ **Session persists** (send multiple messages, bot remembers context)
-✅ **Error handling** (try sending an invalid command)
-
-### Troubleshooting
-
-**Bot not responding?**
-- Check the terminal/console for error messages
-- Verify bot is still running (should see "Bot is running" message)
-- Make sure you're messaging the correct bot (@AgentAeries_bot)
-
-**Want to stop the bot?**
-- Press `Ctrl+C` in the terminal where the bot is running
-
-### Next Steps After Testing
-
-Once you've verified everything works:
-1. ✅ Local testing complete
-2. → Proceed to Vercel deployment (Step 5)
-3. → Set up Supabase (Step 2) - Optional for Phase 1
-
+- Calming, empathetic tone
+- Grounding techniques
+- Asks what's happening
+- Provides reassurance

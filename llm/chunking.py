@@ -71,8 +71,9 @@ class ContentChunker:
         # Split into chunks with overlap
         start = 0
         chunk_index = 0
+        max_chunks = (text_length // (self.chunk_size - self.chunk_overlap)) + 10  # Safety limit
         
-        while start < text_length:
+        while start < text_length and chunk_index < max_chunks:
             # Calculate end position
             end = min(start + self.chunk_size, text_length)
             
@@ -89,10 +90,16 @@ class ContentChunker:
                     chunk_text.rfind('\n')
                 )
                 
-                if sentence_end > len(chunk_text) - 200:
+                if sentence_end > len(chunk_text) - 200 and sentence_end >= 0:
                     # Break at sentence boundary
                     chunk_text = chunk_text[:sentence_end + 1]
                     end = start + len(chunk_text)
+            
+            # Ensure we make progress (prevent infinite loop)
+            if end <= start:
+                # Force minimum progress
+                end = start + min(100, text_length - start)
+                chunk_text = text[start:end]
             
             # Create chunk
             chunk = {
@@ -109,7 +116,9 @@ class ContentChunker:
             chunks.append(chunk)
             
             # Move start position (with overlap)
-            start = end - self.chunk_overlap
+            new_start = end - self.chunk_overlap
+            # Ensure we always advance
+            start = max(new_start, start + 1)
             chunk_index += 1
         
         logger.info(f"Created {len(chunks)} chunks from {source} ({text_length} chars)")
@@ -142,13 +151,39 @@ class ContentChunker:
             source = file_path_obj.stem
         
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                text = f.read()
+            # Read file with error handling for encoding issues
+            file_size = file_path_obj.stat().st_size
+            logger.info(f"Reading file for chunking: {file_path} (size: {file_size:,} bytes)")
             
-            return self.chunk_text(text, source, metadata)
+            # For very large files (>10MB), warn but proceed
+            if file_size > 10 * 1024 * 1024:
+                logger.warning(f"Large file detected ({file_size:,} bytes). This may take a while.")
             
+            # Try UTF-8 first, fallback to latin-1 if needed
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    text = f.read()
+            except UnicodeDecodeError:
+                logger.warning(f"UTF-8 decode failed, trying latin-1: {file_path}")
+                with open(file_path, 'r', encoding='latin-1', errors='replace') as f:
+                    text = f.read()
+            
+            if not text or not text.strip():
+                logger.warning(f"File appears to be empty or contains no readable text: {file_path}")
+                return []
+            
+            logger.info(f"Read {len(text):,} characters from file, starting chunking...")
+            chunks = self.chunk_text(text, source, metadata)
+            logger.info(f"Chunking complete: {len(chunks)} chunks created")
+            
+            return chunks
+            
+        except MemoryError as me:
+            logger.error(f"Out of memory while processing {file_path}. File may be too large.")
+            logger.error(f"MemoryError details: {me}", exc_info=True)
+            return []
         except Exception as e:
-            logger.error(f"Error chunking file {file_path}: {e}", exc_info=True)
+            logger.error(f"Error chunking file {file_path}: {type(e).__name__}: {e}", exc_info=True)
             return []
     
     def save_chunks(
@@ -159,6 +194,7 @@ class ContentChunker:
     ) -> str:
         """
         Save chunks to index file.
+        Uses JSONL format for large files to reduce memory usage.
         
         Args:
             chunks: List of chunk dictionaries
@@ -171,18 +207,37 @@ class ContentChunker:
         output_path = Path(output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        if index_format == "json":
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(chunks, f, indent=2, ensure_ascii=False)
-        elif index_format == "jsonl":
-            with open(output_path, 'w', encoding='utf-8') as f:
-                for chunk in chunks:
-                    f.write(json.dumps(chunk, ensure_ascii=False) + '\n')
-        else:
-            raise ValueError(f"Unsupported index format: {index_format}")
+        logger.info(f"Saving {len(chunks)} chunks to {output_path}")
         
-        logger.info(f"Saved {len(chunks)} chunks to {output_path}")
-        return str(output_path)
+        # For large numbers of chunks, use JSONL format (more memory efficient)
+        if len(chunks) > 1000 and index_format == "json":
+            logger.info(f"Large number of chunks ({len(chunks)}), using JSONL format for efficiency")
+            index_format = "jsonl"
+            output_path = output_path.with_suffix('.jsonl')
+        
+        try:
+            if index_format == "json":
+                # Use compact JSON for smaller files
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    json.dump(chunks, f, indent=2, ensure_ascii=False)
+            elif index_format == "jsonl":
+                # Stream write for memory efficiency
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    for chunk in chunks:
+                        f.write(json.dumps(chunk, ensure_ascii=False) + '\n')
+            else:
+                raise ValueError(f"Unsupported index format: {index_format}")
+            
+            file_size = output_path.stat().st_size
+            logger.info(f"Saved {len(chunks)} chunks to {output_path} ({file_size:,} bytes)")
+            return str(output_path)
+            
+        except MemoryError:
+            logger.error(f"Out of memory while saving chunks. Try using JSONL format or reducing chunk count.")
+            raise
+        except Exception as e:
+            logger.error(f"Error saving chunks to {output_path}: {e}", exc_info=True)
+            raise
     
     def load_chunks(self, index_file: str) -> List[Dict[str, Any]]:
         """

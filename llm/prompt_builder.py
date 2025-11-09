@@ -51,42 +51,33 @@ class CharacterCard:
     
     def get_system_prompt(self) -> str:
         """
-        Build system prompt from character card.
+        Build system prompt from character card - SIMPLIFIED.
         
         Returns:
             Formatted system prompt string
         """
         parts = []
         
-        # System instruction
+        # System instruction (core identity)
         if "system" in self.card_data:
             parts.append(self.card_data["system"])
         
-        # Bio
+        # Brief bio summary (first 2-3 sentences only)
         if "bio" in self.card_data and self.card_data["bio"]:
-            bio_text = "\n".join(self.card_data["bio"]) if isinstance(self.card_data["bio"], list) else self.card_data["bio"]
-            parts.append(f"\n## About {self.card_data.get('name', 'the agent')}:\n{bio_text}")
+            bio_list = self.card_data["bio"] if isinstance(self.card_data["bio"], list) else [self.card_data["bio"]]
+            # Take only first 2 bio items for brevity
+            brief_bio = "\n".join(bio_list[:2])
+            parts.append(f"\n{brief_bio}")
         
-        # Style guidelines
+        # Minimal style guidance (only most critical)
         if "style" in self.card_data:
             style = self.card_data["style"]
-            
-            # All style rules
             if "all" in style:
-                parts.append("\n## Style Guidelines:")
-                for rule in style["all"]:
+                # Take only first 3 most important rules
+                key_rules = style["all"][:3]
+                parts.append("\nKey principles:")
+                for rule in key_rules:
                     parts.append(f"- {rule}")
-            
-            # Chat-specific rules
-            if "chat" in style:
-                parts.append("\n## Chat Behavior:")
-                for rule in style["chat"]:
-                    parts.append(f"- {rule}")
-        
-        # Topics of interest (for context)
-        if "topics" in self.card_data and self.card_data["topics"]:
-            topics = self.card_data["topics"][:10]  # Limit to first 10
-            parts.append(f"\n## Relevant Topics: {', '.join(topics)}")
         
         return "\n".join(parts)
     
@@ -155,7 +146,10 @@ class PromptBuilder:
     def build_messages(
         self,
         conversation_history: List[Dict[str, str]],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        user_query: Optional[str] = None,
+        is_emergency: bool = False,
+        emergency_details: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, str]]:
         """
         Build message list for LLM API call.
@@ -163,28 +157,73 @@ class PromptBuilder:
         Args:
             conversation_history: List of previous messages with 'role' and 'content'
             context: Optional context metadata (disaster type, location, etc.)
+            user_query: Current user query for RAG retrieval (optional)
+            is_emergency: Whether this is an emergency situation
+            emergency_details: Emergency detection details if is_emergency is True
             
         Returns:
             Formatted message list with system prompt and conversation
         """
         messages = []
         
-        # Add system prompt
+        # Build system content - START with RAG context if available (most important)
+        system_parts = []
+        
+        # Add RAG context FIRST (most critical information)
+        if user_query and self.use_knowledge_base and self.knowledge_base:
+            try:
+                relevant_chunks = self.knowledge_base.get_relevant_content(user_query, max_results=3)
+                if relevant_chunks:
+                    # Format RAG context naturally without visible reference markers
+                    rag_context = "\n## Relevant Information from Knowledge Base:\n\n"
+                    
+                    # Combine all relevant chunks into natural context
+                    combined_content = []
+                    for chunk in relevant_chunks:
+                        content = chunk.get('content', '').strip()
+                        # Clean up content - remove page markers and formatting artifacts
+                        content = content.replace('--- Page', '').replace('---', '').strip()
+                        # Use full content (up to 800 chars per chunk for better context)
+                        content_preview = content[:800] if len(content) > 800 else content
+                        if content_preview:
+                            combined_content.append(content_preview)
+                    
+                    # Join content naturally
+                    if combined_content:
+                        rag_context += "\n\n".join(combined_content)
+                        rag_context += "\n\n"
+                        rag_context += "Use this information to answer the user's question naturally and conversationally. "
+                        rag_context += "Do NOT mention references, document names, or that you're using a knowledge base. "
+                        rag_context += "Just use the information naturally in your response as if it's your own knowledge.\n"
+                    
+                    system_parts.append(rag_context)
+                    logger.info(f"✅ Injected {len(relevant_chunks)} RAG chunks for query: '{user_query[:50]}'")
+            except Exception as e:
+                logger.error(f"❌ Error retrieving knowledge base content: {e}", exc_info=True)
+        
+        # Add character personality and system prompt
         system_content = self.system_prompt
         
-        # Add knowledge base context if available
+        # Add knowledge base metadata ONLY if RAG content wasn't added (avoid duplication)
         if self.use_knowledge_base and self.knowledge_base:
-            system_content = self.knowledge_base.add_to_system_prompt(system_content)
+            # Only add metadata summary if we didn't add RAG content above
+            rag_added = any('Relevant Information from Knowledge Base' in part for part in system_parts)
+            if not rag_added:
+                system_content = self.knowledge_base.add_to_system_prompt(system_content)
         
-        # Add response formatting and length guidelines
-        system_content += "\n\n## Response Guidelines:\n"
-        system_content += "- Keep responses between 300-500 words\n"
-        system_content += "- Use emojis strategically to organize information (🫂 for comfort, ⚠️ for warnings, 📋 for lists, ✅ for confirmations, 💙 for support)\n"
-        system_content += "- Format with clear sections using emojis, line breaks, and **bold** text\n"
-        system_content += "- Use bullet points (•) or numbered lists (1️⃣ 2️⃣ 3️⃣) for step-by-step guidance\n"
-        system_content += "- Be personal, warm, and conversational - like texting a trusted friend\n"
-        system_content += "- Use 'I' and 'you' - be direct and personal\n"
-        system_content += "- When referencing knowledge base information, cite the source if relevant\n"
+        system_parts.append(system_content)
+        
+        # Add EMERGENCY RESPONSE PROTOCOL if this is an emergency
+        if is_emergency:
+            emergency_protocol = self._build_emergency_protocol(emergency_details)
+            system_parts.append(emergency_protocol)
+        
+        # Add minimal response guidelines (only if not emergency - emergency protocol handles emergencies)
+        if not is_emergency:
+            guidelines = "\n\n## How to Respond:\n"
+            guidelines += "Respond naturally as AERIS - warm, personal, like texting a trusted friend.\n"
+            guidelines += "Use emojis strategically. Keep responses helpful and actionable.\n"
+            system_parts.append(guidelines)
         
         # Add context if provided
         if context:
@@ -197,15 +236,76 @@ class PromptBuilder:
                 context_parts.append(f"Support type: {context['support_type']}")
             
             if context_parts:
-                system_content += "\n\n## Current Context:\n" + "\n".join(context_parts)
+                system_parts.append("\n\n## Current Context:\n" + "\n".join(context_parts))
+        
+        # Combine all system parts into ONE system message
+        combined_system = "\n".join(system_parts)
+        
+        # Check prompt length and warn if too long
+        if len(combined_system) > 3000:
+            logger.warning(f"System prompt is very long ({len(combined_system)} chars) - may cause confusion")
+            # Truncate if extremely long (emergency measure)
+            if len(combined_system) > 5000:
+                logger.error("System prompt exceeds 5000 chars - truncating to prevent hallucinations")
+                # Keep RAG content and emergency protocol, truncate character card
+                rag_part = ""
+                emergency_part = ""
+                for part in system_parts:
+                    if 'Relevant Information' in part:
+                        rag_part = part
+                    elif 'EMERGENCY SITUATION' in part:
+                        emergency_part = part
+                
+                # Rebuild with essential parts only
+                essential_parts = []
+                if rag_part:
+                    essential_parts.append(rag_part)
+                essential_parts.append(self.system_prompt[:500])  # Truncated character card
+                if emergency_part:
+                    essential_parts.append(emergency_part)
+                combined_system = "\n".join(essential_parts)
+        
+        # Add final instruction - SIMPLIFIED to avoid confusion
+        if is_emergency:
+            combined_system += "\n\nRespond directly to the user as AERIS. Help them through this emergency."
+        else:
+            combined_system += "\n\nRespond directly to the user as AERIS."
+        
+        # Single clear instruction (avoid multiple "Do NOT" statements)
+        combined_system += "\n\nUse the information above naturally. Do not mention references or knowledge base."
         
         messages.append({
             "role": "system",
-            "content": system_content
+            "content": combined_system
         })
         
         # Add conversation history
         messages.extend(conversation_history)
         
         return messages
+    
+    def _build_emergency_protocol(self, emergency_details: Optional[Dict[str, Any]]) -> str:
+        """
+        Build emergency response protocol instructions - SIMPLIFIED AND DIRECT.
+        
+        Args:
+            emergency_details: Emergency detection details
+            
+        Returns:
+            Emergency protocol string
+        """
+        protocol = "\n\n## EMERGENCY SITUATION DETECTED\n"
+        protocol += "You are responding to a life-threatening emergency. Follow these steps:\n\n"
+        
+        protocol += "1. **Calm and reassure**: Start with 'I hear you, I'm here with you.' Be empathetic.\n"
+        protocol += "2. **Collect location**: Ask 'Where exactly are you? What building or address?'\n"
+        protocol += "3. **Assess safety**: Ask 'Are you safe right now? Can you move to higher ground?'\n"
+        protocol += "4. **Provide immediate actions**: Use RAG knowledge to give specific steps like 'Move to highest floor' or 'Stay away from windows'\n"
+        protocol += "5. **Collect contact info**: Ask for phone number for rescue teams\n"
+        protocol += "6. **Stay hopeful**: Say 'Help is coming' and 'We'll get through this together'\n\n"
+        
+        protocol += "**IMPORTANT**: Give SPECIFIC, ACTIONABLE advice. Do NOT repeat generic safety tips.\n"
+        protocol += "Respond directly to the user now - be their companion and guide them through this.\n\n"
+        
+        return protocol
 

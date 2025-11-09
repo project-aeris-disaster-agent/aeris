@@ -21,6 +21,15 @@ except ImportError:
     LLM_AVAILABLE = False
     logger.warning("LLM components not available. Using basic echo mode.")
 
+# Lazy import for emergency detection and rescue info collection
+try:
+    from bot.emergency_detector import EmergencyDetector
+    from bot.rescue_info_collector import RescueInfoCollector
+    EMERGENCY_FEATURES_AVAILABLE = True
+except ImportError:
+    EMERGENCY_FEATURES_AVAILABLE = False
+    logger.warning("Emergency features not available")
+
 
 class MessageHandler:
     """
@@ -41,6 +50,18 @@ class MessageHandler:
         # Initialize LLM components if available
         self.llm_client = None
         self.prompt_builder = None
+        
+        # Initialize emergency detection and rescue info collection
+        self.emergency_detector = None
+        self.rescue_collector = None
+        
+        if EMERGENCY_FEATURES_AVAILABLE:
+            try:
+                self.emergency_detector = EmergencyDetector()
+                self.rescue_collector = RescueInfoCollector()
+                logger.info("Emergency detection and rescue info collection initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize emergency features: {e}")
         
         if self.use_llm:
             try:
@@ -171,31 +192,118 @@ class MessageHandler:
             LLM-generated response
         """
         try:
-            # Get conversation history
+            # Get conversation history (includes current message already added in handle_message)
             conversation_history = session.get_conversation_history(max_messages=10)
             
-            # Add current user message
-            conversation_history.append({"role": "user", "content": message})
+            # Ensure current user message is in history (it should be, but double-check)
+            if not conversation_history or conversation_history[-1].get('content') != message:
+                conversation_history.append({"role": "user", "content": message})
+            
+            # DETECT EMERGENCY SITUATION
+            is_emergency = False
+            emergency_details = {}
+            case_ref = None
+            
+            if self.emergency_detector:
+                is_emergency, emergency_details = self.emergency_detector.detect_emergency(message)
+                
+                if is_emergency:
+                    logger.warning(f"🚨 EMERGENCY DETECTED: {emergency_details}")
+                    
+                    # Collect rescue information
+                    if self.rescue_collector:
+                        rescue_info = self.rescue_collector.collect_info(
+                            user_id=session.user_id,
+                            emergency_details=emergency_details,
+                            conversation_history=conversation_history
+                        )
+                        
+                        # Store rescue information to Supabase
+                        case_ref = self.rescue_collector.store_rescue_info(rescue_info)
+                        if case_ref:
+                            logger.info(f"✅ Rescue info stored with case reference: {case_ref}")
+                            # Update session metadata with case reference
+                            session.update_metadata(rescue_case_ref=case_ref)
             
             # Get context metadata
             context = session.context.get("metadata", {})
             
-            # Build messages with character personality
+            # Update context with emergency information
+            if is_emergency:
+                context['is_emergency'] = True
+                context['emergency_type'] = emergency_details.get('type', 'unknown')
+                context['urgency'] = emergency_details.get('urgency', 'medium')
+                if case_ref:
+                    context['rescue_case_ref'] = case_ref
+            
+            # Build messages with character personality and RAG context
+            logger.info(f"Building prompt for query: '{message[:100]}' (Emergency: {is_emergency})")
             messages = self.prompt_builder.build_messages(
                 conversation_history=conversation_history,
-                context=context
+                context=context,
+                user_query=message,  # Pass user query for RAG retrieval
+                is_emergency=is_emergency,
+                emergency_details=emergency_details if is_emergency else None
             )
             
-            # Call LLM
+            # Log RAG injection status
+            system_msg = next((m['content'] for m in messages if m['role'] == 'system'), '')
+            has_rag = 'Relevant Information from Knowledge Base' in system_msg
+            if has_rag:
+                logger.info("✅ RAG context injected in system prompt")
+            else:
+                logger.debug("No RAG context found (may not be needed for this query)")
+            
+            # Call LLM with adjusted parameters for emergencies
             # 300-500 words ≈ 400-650 tokens (rough estimate: 1 word ≈ 1.3 tokens)
             # Set max_tokens to ~650 to allow for 500 words
+            logger.debug(f"Sending {len(messages)} messages to LLM")
+            
+            # Use lower temperature for emergencies to get more focused responses
+            temperature = 0.5 if is_emergency else 0.7
+            max_tokens = 800 if is_emergency else 650  # Allow more tokens for emergency responses
+            
             response = await self.llm_client.chat(
                 messages=messages,
-                temperature=0.7,
-                max_tokens=650  # Allows for ~500 words
+                temperature=temperature,
+                max_tokens=max_tokens
             )
             
             if response:
+                logger.info(f"LLM response received: {len(response)} characters")
+                
+                # VALIDATE RESPONSE FOR HALLUCINATIONS
+                response_lower = response.lower()
+                
+                # Check for repetitive content (hallucination indicator)
+                words = response.split()
+                if len(words) > 10:
+                    unique_ratio = len(set(words)) / len(words)
+                    if unique_ratio < 0.3:  # Less than 30% unique words = repetitive
+                        logger.error(f"⚠️ HALLUCINATION DETECTED: Repetitive response (unique ratio: {unique_ratio:.2f})")
+                        # Try to get a better response with lower temperature
+                        logger.info("Retrying with lower temperature...")
+                        response = await self.llm_client.chat(
+                            messages=messages,
+                            temperature=0.3,
+                            max_tokens=max_tokens
+                        )
+                        if response:
+                            logger.info("Retry successful")
+                        else:
+                            logger.error("Retry failed - using fallback")
+                            return await self.handle_conversation(message, session)
+                
+                # Check for completely unrelated content
+                if is_emergency:
+                    emergency_keywords = ['rescue', 'help', 'location', 'building', 'flood', 'water', 'safe', 'emergency']
+                    if not any(keyword in response_lower for keyword in emergency_keywords):
+                        logger.warning("⚠️ Response may not address emergency - checking relevance")
+                
+                # Check if response seems to reference knowledge base content
+                if any(keyword in response_lower for keyword in ['uwan', 'tropical', 'cyclone', 'storm', 'pagasa']):
+                    logger.info("✅ Response appears to reference knowledge base content")
+                
                 return response.strip()
             else:
                 logger.warning("LLM returned empty response, falling back to echo")

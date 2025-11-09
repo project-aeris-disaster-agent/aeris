@@ -235,6 +235,7 @@ class KnowledgeBase:
     def _score_chunk(self, content: str, query_terms: set) -> float:
         """
         Score a chunk based on query term matches.
+        Improved scoring with better case-insensitive matching.
         
         Args:
             content: Chunk content (lowercase)
@@ -247,25 +248,38 @@ class KnowledgeBase:
             return 0.0
         
         score = 0.0
-        content_words = set(re.findall(r'\b\w+\b', content))
+        content_lower = content.lower()
+        content_words = set(re.findall(r'\b\w+\b', content_lower))
         
-        # Count matching terms
+        # Count matching terms (case-insensitive)
         matches = len(query_terms.intersection(content_words))
         
         if matches == 0:
             return 0.0
         
-        # Base score: number of matching terms
-        score = matches
+        # Base score: number of matching terms (weighted)
+        score = matches * 2.0  # Increased base weight
         
-        # Bonus: exact phrase matches
-        content_lower = content.lower()
+        # Bonus: exact phrase matches (case-insensitive)
         for term in query_terms:
-            if len(term) > 3:  # Only check longer terms
-                count = content_lower.count(term)
-                score += count * 0.5
+            if len(term) >= 3:  # Check terms 3+ chars
+                # Count occurrences (case-insensitive)
+                count = content_lower.count(term.lower())
+                if count > 0:
+                    # Higher weight for longer/more important terms
+                    term_weight = len(term) * 0.3
+                    score += count * term_weight
         
-        # Normalize by query length
+        # Bonus: word boundary matches (e.g., "uwan" matches "UWAN")
+        for term in query_terms:
+            if len(term) >= 3:
+                # Check for word boundaries
+                pattern = r'\b' + re.escape(term.lower()) + r'\b'
+                matches = len(re.findall(pattern, content_lower))
+                if matches > 0:
+                    score += matches * 1.5
+        
+        # Normalize by query length (but don't penalize too much)
         score = score / max(len(query_terms), 1)
         
         return score
