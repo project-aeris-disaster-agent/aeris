@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
 import { Mail, Lock, Eye, EyeClosed, ArrowRight } from 'lucide-react';
 import { cn } from "@/lib/utils";
+import { getTwitterOAuthService } from '@/services/twitterOAuth';
 
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
@@ -29,6 +30,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isTwitterLoading, setIsTwitterLoading] = useState(false);
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
   const [rememberMe, setRememberMe] = useState(false);
 
@@ -56,6 +58,22 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
       setIsLoading(false);
       onSuccess?.({ email });
     }, 2000);
+  };
+
+  const handleTwitterSignIn = async () => {
+    try {
+      setIsTwitterLoading(true);
+      const oauthService = getTwitterOAuthService();
+      const { url } = await oauthService.getAuthorizationUrl();
+      
+      // Redirect to Twitter OAuth
+      window.location.href = url;
+    } catch (error) {
+      console.error('Twitter sign-in error:', error);
+      setIsTwitterLoading(false);
+      // Show error to user
+      alert('Failed to initiate Twitter sign-in. Please check your environment variables.');
+    }
   };
 
   return (
@@ -527,6 +545,43 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                   
                   <span className="text-white/80 group-hover/google:text-white transition-colors text-xs">
                     Sign in with Google
+                  </span>
+                  
+                  {/* Button hover effect */}
+                  <motion.div 
+                    className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/5 to-white/0"
+                    initial={{ x: '-100%' }}
+                    whileHover={{ x: '100%' }}
+                    transition={{ 
+                      duration: 1, 
+                      ease: "easeInOut"
+                    }}
+                  />
+                </div>
+              </motion.button>
+
+              {/* Twitter/X Sign In */}
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                type="button"
+                onClick={handleTwitterSignIn}
+                disabled={isTwitterLoading}
+                className="w-full relative group/twitter mt-3"
+              >
+                <div className="absolute inset-0 bg-white/5 rounded-lg blur opacity-0 group-hover/twitter:opacity-70 transition-opacity duration-300" />
+                
+                <div className="relative overflow-hidden bg-white/5 text-white font-medium h-10 rounded-lg border border-white/10 hover:border-white/20 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50">
+                  {isTwitterLoading ? (
+                    <div className="w-4 h-4 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-4 h-4 text-white/80 group-hover/twitter:text-white transition-colors" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                    </svg>
+                  )}
+                  
+                  <span className="text-white/80 group-hover/twitter:text-white transition-colors text-xs">
+                    {isTwitterLoading ? 'Connecting...' : 'Sign in with X'}
                   </span>
                   
                   {/* Button hover effect */}
