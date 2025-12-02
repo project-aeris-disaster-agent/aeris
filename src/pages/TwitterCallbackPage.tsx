@@ -2,6 +2,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getTwitterOAuthService } from '@/services/twitterOAuth';
+import { exchangeCodeForTokens, getTwitterUserProfile } from '@/services/twitterApi';
+import { AuthService } from '@/services/auth';
+import { supabase } from '@/lib/supabase';
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -52,42 +55,51 @@ export function TwitterCallbackPage() {
           return;
         }
 
-        // Exchange code for tokens (via backend API)
-        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
-        const response = await fetch(`${apiBaseUrl}/auth/twitter/callback`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            code,
-            codeVerifier,
-            state,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ message: 'Failed to exchange authorization code' }));
-          throw new Error(errorData.message || 'Failed to exchange authorization code');
+        // Check if user is authenticated
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          setStatus('error');
+          setMessage('Please sign in first before connecting Twitter.');
+          setTimeout(() => navigate('/auth'), 3000);
+          return;
         }
 
-        const data = await response.json();
+        // Exchange code for tokens via Supabase Edge Function
+        const redirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI || `${window.location.origin}/auth/twitter/callback`;
+        const tokenData = await exchangeCodeForTokens(code, codeVerifier, redirectUri);
         
+        // Fetch user profile from Twitter
+        const twitterUser = await getTwitterUserProfile(tokenData.access_token);
+
         // Clear stored OAuth data
         oauthService.clearStoredData();
 
-        // Store tokens (you might want to store in httpOnly cookies instead)
-        // For now, storing access token in localStorage (refresh token should be httpOnly cookie)
-        if (data.accessToken) {
-          localStorage.setItem('twitter_access_token', data.accessToken);
+        // Store Twitter tokens and profile in Supabase
+        const { error: linkError } = await AuthService.linkTwitterAccount({
+          twitter_user_id: twitterUser.id,
+          twitter_username: twitterUser.username,
+          twitter_access_token: tokenData.access_token,
+          twitter_refresh_token: tokenData.refresh_token,
+        });
+
+        if (linkError) {
+          throw new Error('Failed to save Twitter connection. Please try again.');
+        }
+
+        // Update profile with Twitter name if not set
+        if (twitterUser.name && !user.user_metadata?.full_name) {
+          await AuthService.updateProfile({
+            full_name: twitterUser.name,
+            profile_photo_url: twitterUser.profile_image_url || null,
+          });
         }
 
         setStatus('success');
-        setMessage('Successfully connected to Twitter! Redirecting...');
+        setMessage(`Successfully connected to Twitter as @${twitterUser.username}! Redirecting...`);
 
-        // Redirect to dashboard or next step
+        // Redirect to home/dashboard
         setTimeout(() => {
-          navigate('/dashboard'); // or wherever you want to redirect
+          navigate('/home');
         }, 2000);
 
       } catch (error) {

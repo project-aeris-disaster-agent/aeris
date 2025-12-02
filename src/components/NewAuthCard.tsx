@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
-import { Mail, Lock, Eye, EyeClosed, ArrowRight } from 'lucide-react';
+import { Mail, Lock, Eye, EyeClosed, ArrowRight, User } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { getTwitterOAuthService } from '@/services/twitterOAuth';
 import { useAuth } from '@/contexts/AuthContext';
@@ -27,11 +27,15 @@ interface NewAuthCardProps {
 }
 
 export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
-  const { signIn } = useAuth();
+  const { signIn, signUp } = useAuth();
   const navigate = useNavigate();
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isTwitterLoading, setIsTwitterLoading] = useState(false);
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
@@ -58,20 +62,56 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
+    
+    // Validation
+    if (!email || !password) {
+      setError('Please fill in all required fields.');
+      return;
+    }
+    
+    if (authMode === 'signup') {
+      if (!name.trim()) {
+        setError('Please enter your name.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Passwords do not match.');
+        return;
+      }
+      if (password.length < 8) {
+        setError('Password must be at least 8 characters long.');
+        return;
+      }
+    }
+    
     setIsLoading(true);
     
     try {
-      const { error } = await signIn(email, password);
-      
-      if (error) {
-        setError(error.message || 'Failed to sign in. Please check your credentials.');
-        setIsLoading(false);
-        return;
+      if (authMode === 'signup') {
+        const { error } = await signUp(email, password, name);
+        
+        if (error) {
+          setError(error.message || 'Failed to create account. Please try again.');
+          setIsLoading(false);
+          return;
+        }
+        
+        // Success - redirect to home
+        onSuccess?.({ email, name });
+        navigate('/home');
+      } else {
+        const { error } = await signIn(email, password);
+        
+        if (error) {
+          setError(error.message || 'Failed to sign in. Please check your credentials.');
+          setIsLoading(false);
+          return;
+        }
+        
+        // Success - redirect to home
+        onSuccess?.({ email });
+        navigate('/home');
       }
-      
-      // Success - redirect to home
-      onSuccess?.({ email });
-      navigate('/home');
     } catch (err) {
       setError('An unexpected error occurred. Please try again.');
       setIsLoading(false);
@@ -337,7 +377,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                 transition={{ delay: 0.2 }}
                 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-white to-white/80"
               >
-                Welcome Back
+                {authMode === 'signup' ? 'Create Account' : 'Welcome Back'}
               </motion.h1>
               
               <motion.p
@@ -346,7 +386,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                 transition={{ delay: 0.3 }}
                 className="text-white/60 text-xs"
               >
-                Sign in to continue to SONA
+                {authMode === 'signup' ? 'Sign up to get started with SONA' : 'Sign in to continue to SONA'}
               </motion.p>
             </div>
 
@@ -361,9 +401,51 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
               </motion.div>
             )}
 
-            {/* Login form */}
+            {/* Login/Signup form */}
             <form onSubmit={handleSubmit} className="space-y-4">
               <motion.div className="space-y-3">
+                {/* Name input - only for signup */}
+                {authMode === 'signup' && (
+                  <motion.div 
+                    className={`relative ${focusedInput === "name" ? 'z-10' : ''}`}
+                    whileFocus={{ scale: 1.02 }}
+                    whileHover={{ scale: 1.01 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                  >
+                    <div className="absolute -inset-[0.5px] bg-gradient-to-r from-white/10 via-white/5 to-white/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-300" />
+                    
+                    <div className="relative flex items-center overflow-hidden rounded-lg">
+                      <User className={`absolute left-3 w-4 h-4 transition-all duration-300 ${
+                        focusedInput === "name" ? 'text-white' : 'text-white/40'
+                      }`} />
+                      
+                      <Input
+                        type="text"
+                        placeholder="Full Name"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        onFocus={() => setFocusedInput("name")}
+                        onBlur={() => setFocusedInput(null)}
+                        className="w-full bg-white/5 border-transparent focus:border-white/20 text-white placeholder:text-white/30 h-10 transition-all duration-300 pl-10 pr-3 focus:bg-white/10"
+                      />
+                      
+                      {focusedInput === "name" && (
+                        <motion.div 
+                          layoutId="input-highlight"
+                          className="absolute inset-0 bg-white/5 -z-10"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                        />
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+
                 {/* Email input */}
                 <motion.div 
                   className={`relative ${focusedInput === "email" ? 'z-10' : ''}`}
@@ -451,43 +533,100 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                     )}
                   </div>
                 </motion.div>
+
+                {/* Confirm Password input - only for signup */}
+                {authMode === 'signup' && (
+                  <motion.div 
+                    className={`relative ${focusedInput === "confirmPassword" ? 'z-10' : ''}`}
+                    whileFocus={{ scale: 1.02 }}
+                    whileHover={{ scale: 1.01 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                  >
+                    <div className="absolute -inset-[0.5px] bg-gradient-to-r from-white/10 via-white/5 to-white/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-300" />
+                    
+                    <div className="relative flex items-center overflow-hidden rounded-lg">
+                      <Lock className={`absolute left-3 w-4 h-4 transition-all duration-300 ${
+                        focusedInput === "confirmPassword" ? 'text-white' : 'text-white/40'
+                      }`} />
+                      
+                      <Input
+                        type={showConfirmPassword ? "text" : "password"}
+                        placeholder="Confirm Password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        onFocus={() => setFocusedInput("confirmPassword")}
+                        onBlur={() => setFocusedInput(null)}
+                        className="w-full bg-white/5 border-transparent focus:border-white/20 text-white placeholder:text-white/30 h-10 transition-all duration-300 pl-10 pr-10 focus:bg-white/10"
+                      />
+                      
+                      {/* Toggle password visibility */}
+                      <div 
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)} 
+                        className="absolute right-3 cursor-pointer"
+                      >
+                        {showConfirmPassword ? (
+                          <Eye className="w-4 h-4 text-white/40 hover:text-white transition-colors duration-300" />
+                        ) : (
+                          <EyeClosed className="w-4 h-4 text-white/40 hover:text-white transition-colors duration-300" />
+                        )}
+                      </div>
+                      
+                      {/* Input highlight effect */}
+                      {focusedInput === "confirmPassword" && (
+                        <motion.div 
+                          layoutId="input-highlight"
+                          className="absolute inset-0 bg-white/5 -z-10"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                        />
+                      )}
+                    </div>
+                  </motion.div>
+                )}
               </motion.div>
 
-              {/* Remember me & Forgot password */}
-              <div className="flex items-center justify-between pt-1">
-                <div className="flex items-center space-x-2">
-                  <div className="relative">
-                    <input
-                      id="remember-me"
-                      name="remember-me"
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={() => setRememberMe(!rememberMe)}
-                      className="appearance-none h-4 w-4 rounded border border-white/20 bg-white/5 checked:bg-white checked:border-white focus:outline-none focus:ring-1 focus:ring-white/30 transition-all duration-200"
-                    />
-                    {rememberMe && (
-                      <motion.div 
-                        initial={{ opacity: 0, scale: 0.5 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="absolute inset-0 flex items-center justify-center text-black pointer-events-none"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                      </motion.div>
-                    )}
+              {/* Remember me & Forgot password - only for login */}
+              {authMode === 'login' && (
+                <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center space-x-2">
+                    <div className="relative">
+                      <input
+                        id="remember-me"
+                        name="remember-me"
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={() => setRememberMe(!rememberMe)}
+                        className="appearance-none h-4 w-4 rounded border border-white/20 bg-white/5 checked:bg-white checked:border-white focus:outline-none focus:ring-1 focus:ring-white/30 transition-all duration-200"
+                      />
+                      {rememberMe && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.5 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          className="absolute inset-0 flex items-center justify-center text-black pointer-events-none"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        </motion.div>
+                      )}
+                    </div>
+                    <label htmlFor="remember-me" className="text-xs text-white/60 hover:text-white/80 transition-colors duration-200 cursor-pointer">
+                      Remember me
+                    </label>
                   </div>
-                  <label htmlFor="remember-me" className="text-xs text-white/60 hover:text-white/80 transition-colors duration-200 cursor-pointer">
-                    Remember me
-                  </label>
+                  
+                  <div className="text-xs relative group/link">
+                    <Link to="/forgot-password" className="text-white/60 hover:text-white transition-colors duration-200">
+                      Forgot password?
+                    </Link>
+                  </div>
                 </div>
-                
-                <div className="text-xs relative group/link">
-                  <Link to="/forgot-password" className="text-white/60 hover:text-white transition-colors duration-200">
-                    Forgot password?
-                  </Link>
-                </div>
-              </div>
+              )}
 
               {/* Sign in button */}
               <motion.button
@@ -538,7 +677,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                         exit={{ opacity: 0 }}
                         className="flex items-center justify-center gap-1 text-sm font-medium"
                       >
-                        Sign In
+                        {authMode === 'signup' ? 'Sign Up' : 'Sign In'}
                         <ArrowRight className="w-3 h-3 group-hover/button:translate-x-1 transition-transform duration-300" />
                       </motion.span>
                     )}
@@ -626,23 +765,32 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                 </div>
               </motion.button>
 
-              {/* Sign up link */}
+              {/* Toggle between login/signup */}
               <motion.p 
                 className="text-center text-xs text-white/60 mt-4"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.5 }}
               >
-                Don't have an account?{' '}
-                <Link 
-                  to="/signup" 
+                {authMode === 'login' ? "Don't have an account? " : "Already have an account? "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(authMode === 'login' ? 'signup' : 'login');
+                    setError(null);
+                    // Clear form fields when switching modes
+                    if (authMode === 'signup') {
+                      setName("");
+                      setConfirmPassword("");
+                    }
+                  }}
                   className="relative inline-block group/signup"
                 >
                   <span className="relative z-10 text-white group-hover/signup:text-white/70 transition-colors duration-300 font-medium">
-                    Sign up
+                    {authMode === 'login' ? 'Sign up' : 'Sign in'}
                   </span>
                   <span className="absolute bottom-0 left-0 w-0 h-[1px] bg-white group-hover/signup:w-full transition-all duration-300" />
-                </Link>
+                </button>
               </motion.p>
             </form>
           </div>
