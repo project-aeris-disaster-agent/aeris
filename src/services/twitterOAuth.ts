@@ -53,6 +53,11 @@ export class TwitterOAuthService {
 
   /**
    * Get Twitter OAuth authorization URL
+   * 
+   * Note: Twitter OAuth 2.0 will always show the login screen on FIRST-TIME authorization,
+   * even if the user is already logged into Twitter. This is a security feature by Twitter.
+   * After the first authorization, subsequent authorizations should skip the login screen
+   * if the user is still logged in and has previously authorized the app.
    */
   async getAuthorizationUrl(): Promise<{
     url: string;
@@ -74,7 +79,8 @@ export class TwitterOAuthService {
       state: state,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
-      prompt: 'consent', // Allows authorization without re-login if user is already authenticated
+      // Twitter OAuth 2.0 doesn't support 'prompt' parameter
+      // First-time authorization will always show login screen (Twitter security feature)
     });
 
     const url = `https://twitter.com/i/oauth2/authorize?${params.toString()}`;
