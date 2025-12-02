@@ -15,12 +15,15 @@ Transform your Twitter presence into an autonomous AI agent that:
 ## 🚀 Features
 
 ### Core Functionality
-- ✅ User authentication and registration
+- ✅ User authentication and registration (Supabase Auth)
+- ✅ User profiles with Web3 wallet support
 - ✅ Twitter/X account linking via OAuth
-- ✅ Automatic character card generation (ElizaOS format)
-- ✅ Real-time chat interface with your alter ego
-- ✅ Content creation and auto-posting
-- ✅ Post scheduling and content calendar
+- ✅ Character card storage (ElizaOS format)
+- ✅ Chat history storage for agent context
+- ✅ Automatic character card generation (ElizaOS format) - *Coming Soon*
+- ✅ Real-time chat interface with your alter ego - *Coming Soon*
+- ✅ Content creation and auto-posting - *Coming Soon*
+- ✅ Post scheduling and content calendar - *Coming Soon*
 
 ### Coming Soon
 - 🔄 Multi-platform support (Discord, Telegram, LinkedIn)
@@ -31,9 +34,10 @@ Transform your Twitter presence into an autonomous AI agent that:
 ## 🏗️ Architecture
 
 ### Tech Stack
-- **Frontend**: React 18+ with TypeScript
-- **Backend**: Node.js/Express (or Next.js API routes)
-- **Database**: PostgreSQL/MongoDB
+- **Frontend**: React 18+ with TypeScript, Vite
+- **Backend**: Supabase (Auth, Database, Storage)
+- **Database**: PostgreSQL (via Supabase)
+- **Authentication**: Supabase Auth
 - **AI Framework**: ElizaOS
 - **Personality Analysis**: Grok API (xAI)
 - **Social Integration**: Twitter API v2 (native, no scraping)
