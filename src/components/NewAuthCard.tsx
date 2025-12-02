@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
 import { Mail, Lock, Eye, EyeClosed, ArrowRight } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { getTwitterOAuthService } from '@/services/twitterOAuth';
+import { useAuth } from '@/contexts/AuthContext';
 
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
@@ -26,6 +27,8 @@ interface NewAuthCardProps {
 }
 
 export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
+  const { signIn } = useAuth();
+  const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -33,6 +36,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
   const [isTwitterLoading, setIsTwitterLoading] = useState(false);
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
   const [rememberMe, setRememberMe] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // For 3D card effect - increased rotation range for more pronounced 3D effect
   const mouseX = useMotionValue(0);
@@ -51,13 +55,27 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
     mouseY.set(0);
   };
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    setError(null);
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
+    
+    try {
+      const { error } = await signIn(email, password);
+      
+      if (error) {
+        setError(error.message || 'Failed to sign in. Please check your credentials.');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Success - redirect to home
       onSuccess?.({ email });
-    }, 2000);
+      navigate('/home');
+    } catch (err) {
+      setError('An unexpected error occurred. Please try again.');
+      setIsLoading(false);
+    }
   };
 
   const handleTwitterSignIn = async () => {
@@ -331,6 +349,17 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                 Sign in to continue to SONA
               </motion.p>
             </div>
+
+            {/* Error Message */}
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-300 text-xs"
+              >
+                {error}
+              </motion.div>
+            )}
 
             {/* Login form */}
             <form onSubmit={handleSubmit} className="space-y-4">

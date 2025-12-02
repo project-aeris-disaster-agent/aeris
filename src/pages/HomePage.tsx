@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { DitheringShader } from '@/components/ui/dithering-shader';
 
 export function HomePage() {
@@ -22,15 +21,6 @@ export function HomePage() {
           alt="SONA Logo" 
           className="h-16 sm:h-20 md:h-24 w-auto"
         />
-      </div>
-      
-      <div className="relative z-10 flex items-center justify-center">
-        <Link
-          to="/auth"
-          className="px-8 py-3 bg-primary text-primary-foreground rounded-xl font-medium hover:opacity-90 transition-opacity"
-        >
-          Get Started
-        </Link>
       </div>
     </div>
   );
