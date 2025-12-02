@@ -8,6 +8,10 @@ export interface TwitterTokens {
   token_type: string;
   scope?: string;
   user?: TwitterUser; // User profile included from Edge Function
+  supabase_user?: {
+    id: string;
+    email: string;
+  }; // Supabase user created by Edge Function
 }
 
 export interface TwitterUser {

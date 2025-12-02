@@ -70,83 +70,46 @@ export function TwitterCallbackPage() {
         // Clear stored OAuth data
         oauthService.clearStoredData();
 
-        // Check if user already exists (by Twitter ID)
-        const { data: existingProfile, error: profileError } = await supabase
-          .from('profiles')
-          .select('id, email')
-          .eq('twitter_user_id', twitterUser.id)
-          .maybeSingle();
-
+        // Edge Function creates user with admin privileges (bypasses email validation)
         let user;
-        
-        // Generate a valid email format (Supabase requires valid email domains)
-        // Use a format that Supabase accepts: {twitter_id}@twitter-oauth.app
-        const email = `${twitterUser.id.replace(/[^a-zA-Z0-9]/g, '_')}@twitter-oauth.app`;
-        const password = `Twitter_${crypto.randomUUID().replace(/-/g, '')}${Math.random().toString(36).slice(2, 8)}!`; // Valid password format
-
-        if (existingProfile && !profileError) {
-          // User exists in profiles - try to get their auth user
-          const { data: { user: existingUser }, error: getUserError } = await supabase.auth.getUser();
+        if (tokenData.supabase_user) {
+          // User was created by Edge Function - verify we have the user
+          const { data: { user: currentUser }, error: getUserError } = await supabase.auth.getUser();
           
-          if (getUserError || !existingUser || existingUser.id !== existingProfile.id) {
-            // User exists in profiles but not signed in - sign them up with same email
-            const { data: authData, error: signUpError } = await supabase.auth.signUp({
-              email: existingProfile.email || email,
-              password: password,
-              options: {
-                data: {
-                  full_name: twitterUser.name,
-                  twitter_user_id: twitterUser.id,
-                  twitter_username: twitterUser.username,
-                },
-                emailRedirectTo: `${window.location.origin}/home`,
-              },
-            });
-
-            if (signUpError) {
-              // If email already exists, try to sign in
-              if (signUpError.message?.includes('already registered')) {
-                // User exists - we'll handle this after storing tokens
-                const { data: { user: signInUser } } = await supabase.auth.getUser();
-                user = signInUser;
-              } else {
-                throw new Error(`Failed to sign in: ${signUpError.message}`);
-              }
-            } else if (authData.user) {
-              user = authData.user;
+          if (getUserError || !currentUser || currentUser.id !== tokenData.supabase_user.id) {
+            // User not signed in - we need to sign them in
+            // Since Edge Function created user, we'll use a workaround:
+            // Check if profile exists, if so user is already created
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('id', tokenData.supabase_user.id)
+              .single();
+            
+            if (profile) {
+              // User exists but not signed in - this shouldn't happen but handle it
+              throw new Error('User created but session not established. Please refresh the page.');
+            } else {
+              throw new Error('Failed to authenticate user. Please try again.');
             }
           } else {
-            user = existingUser;
+            user = currentUser;
           }
         } else {
-          // New user - create account via Supabase Auth
-          const { data: authData, error: signUpError } = await supabase.auth.signUp({
-            email: email,
-            password: password,
-            options: {
-              data: {
-                full_name: twitterUser.name,
-                twitter_user_id: twitterUser.id,
-                twitter_username: twitterUser.username,
-              },
-              emailRedirectTo: `${window.location.origin}/home`,
-            },
-          });
+          // Fallback: Check if user exists and sign them in
+          const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('id, email')
+            .eq('twitter_user_id', twitterUser.id)
+            .maybeSingle();
 
-          if (signUpError) {
-            // If user already exists, try to get existing user
-            if (signUpError.message?.includes('already registered')) {
-              const { data: { user: existingUser } } = await supabase.auth.getUser();
-              if (existingUser) {
-                user = existingUser;
-              } else {
-                throw new Error('Account exists but could not sign in. Please try email/password login.');
-              }
+          if (existingProfile) {
+            const { data: { user: existingUser } } = await supabase.auth.getUser();
+            if (existingUser && existingUser.id === existingProfile.id) {
+              user = existingUser;
             } else {
-              throw new Error(`Failed to create account: ${signUpError.message}`);
+              throw new Error('Failed to sign in. Please try again.');
             }
-          } else if (authData.user) {
-            user = authData.user;
           } else {
             throw new Error('Failed to create account. Please try again.');
           }

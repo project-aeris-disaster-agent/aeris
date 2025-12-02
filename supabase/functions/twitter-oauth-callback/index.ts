@@ -28,8 +28,8 @@ serve(async (req) => {
     // Get environment variables
     const clientId = Deno.env.get('TWITTER_CLIENT_ID');
     const clientSecret = Deno.env.get('TWITTER_CLIENT_SECRET');
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') || Deno.env.get('VITE_SUPABASE_URL');
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') || 'https://wqwhlbmsafgjlsjujuel.supabase.co';
+    const supabaseServiceKey = Deno.env.get('SERVICE_ROLE_KEY');
 
     if (!clientId || !clientSecret) {
       return new Response(
@@ -77,6 +77,61 @@ serve(async (req) => {
       userData = userResult.data;
     }
 
+    // Create or get Supabase user using admin API (bypasses email validation)
+    let supabaseUser = null;
+    if (userData && supabaseUrl && supabaseServiceKey) {
+      const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      });
+
+      // Check if user exists by Twitter ID
+      const { data: existingProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('id, email')
+        .eq('twitter_user_id', userData.id)
+        .maybeSingle();
+
+      if (existingProfile) {
+        // User exists - get their auth user
+        const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(existingProfile.id);
+        supabaseUser = user;
+      } else {
+        // Create new user with admin API (bypasses email validation)
+        // Use a valid email format: {twitter_id}@twitter.localhost (localhost is valid)
+        const email = `${userData.id.replace(/[^a-zA-Z0-9]/g, '_')}@twitter.localhost`;
+        const password = `Twitter_${crypto.randomUUID().replace(/-/g, '')}${Math.random().toString(36).slice(2, 8)}!`;
+        
+        const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+          email: email,
+          password: password,
+          email_confirm: true, // Auto-confirm email
+          user_metadata: {
+            full_name: userData.name,
+            twitter_user_id: userData.id,
+            twitter_username: userData.username,
+          },
+        });
+
+        if (!createError && newUser.user) {
+          supabaseUser = newUser.user;
+          
+          // Generate a session for the new user
+          const { data: sessionData } = await supabaseAdmin.auth.admin.generateLink({
+            type: 'magiclink',
+            email: email,
+          });
+          
+          if (sessionData?.properties?.hashed_token) {
+            // Store session info for frontend
+            supabaseUser.session_token = sessionData.properties.hashed_token;
+          }
+        }
+      }
+    }
+
     return new Response(
       JSON.stringify({
         access_token: tokens.access_token,
@@ -85,6 +140,10 @@ serve(async (req) => {
         token_type: tokens.token_type,
         scope: tokens.scope,
         user: userData,
+        supabase_user: supabaseUser ? {
+          id: supabaseUser.id,
+          email: supabaseUser.email,
+        } : null,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
