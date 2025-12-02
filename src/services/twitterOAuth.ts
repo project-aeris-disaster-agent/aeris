@@ -74,6 +74,7 @@ export class TwitterOAuthService {
       state: state,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
+      prompt: 'consent', // Allows authorization without re-login if user is already authenticated
     });
 
     const url = `https://twitter.com/i/oauth2/authorize?${params.toString()}`;
