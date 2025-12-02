@@ -73,27 +73,39 @@ export function TwitterCallbackPage() {
         // Edge Function creates user with admin privileges (bypasses email validation)
         let user;
         if (tokenData.supabase_user) {
-          // User was created by Edge Function - verify we have the user
-          const { data: { user: currentUser }, error: getUserError } = await supabase.auth.getUser();
-          
-          if (getUserError || !currentUser || currentUser.id !== tokenData.supabase_user.id) {
-            // User not signed in - we need to sign them in
-            // Since Edge Function created user, we'll use a workaround:
-            // Check if profile exists, if so user is already created
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('id')
-              .eq('id', tokenData.supabase_user.id)
-              .single();
-            
-            if (profile) {
-              // User exists but not signed in - this shouldn't happen but handle it
-              throw new Error('User created but session not established. Please refresh the page.');
-            } else {
-              throw new Error('Failed to authenticate user. Please try again.');
+          // User was created by Edge Function - sign them in
+          if (tokenData.supabase_user.password) {
+            // New user - sign in with password from Edge Function
+            const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+              email: tokenData.supabase_user.email,
+              password: tokenData.supabase_user.password,
+            });
+
+            if (signInError || !authData.user) {
+              throw new Error(`Failed to sign in: ${signInError?.message || 'Unknown error'}`);
             }
+
+            user = authData.user;
           } else {
-            user = currentUser;
+            // Existing user - check if already signed in
+            const { data: { user: currentUser }, error: getUserError } = await supabase.auth.getUser();
+            
+            if (getUserError || !currentUser || currentUser.id !== tokenData.supabase_user.id) {
+              // User exists but not signed in - check profile
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('id', tokenData.supabase_user.id)
+                .single();
+              
+              if (profile) {
+                throw new Error('User exists but session not established. Please sign in manually.');
+              } else {
+                throw new Error('Failed to authenticate user. Please try again.');
+              }
+            } else {
+              user = currentUser;
+            }
           }
         } else {
           // Fallback: Check if user exists and sign them in

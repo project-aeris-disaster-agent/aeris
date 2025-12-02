@@ -11,6 +11,7 @@ export interface TwitterTokens {
   supabase_user?: {
     id: string;
     email: string;
+    password?: string; // Temporary password for sign-in (only for new users)
   }; // Supabase user created by Edge Function
 }
 
