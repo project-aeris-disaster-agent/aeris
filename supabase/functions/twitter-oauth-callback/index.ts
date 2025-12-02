@@ -116,9 +116,29 @@ serve(async (req) => {
           },
         });
 
-        if (!createError && newUser.user) {
+        if (createError) {
+          console.error('Failed to create user:', createError);
+          // Continue anyway - return error in response
+          return new Response(
+            JSON.stringify({
+              error: `Failed to create user: ${createError.message}`,
+              access_token: tokens.access_token,
+              refresh_token: tokens.refresh_token,
+              expires_in: tokens.expires_in,
+              token_type: tokens.token_type,
+              scope: tokens.scope,
+              user: userData,
+              supabase_user: null,
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        if (newUser && newUser.user) {
           supabaseUser = newUser.user;
           userPassword = password; // Return password so frontend can sign in
+        } else {
+          console.error('User creation returned no user:', newUser);
         }
       }
     }

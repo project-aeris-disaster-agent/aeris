@@ -60,12 +60,24 @@ export function TwitterCallbackPage() {
         const redirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI || `${window.location.origin}/auth/twitter/callback`;
         const tokenData = await exchangeCodeForTokens(code, codeVerifier, redirectUri);
         
+        // Check for error from Edge Function
+        if ((tokenData as any).error) {
+          throw new Error((tokenData as any).error);
+        }
+        
         // User profile is already included in tokenData from Edge Function
         if (!tokenData.user) {
           throw new Error('Failed to fetch Twitter user profile');
         }
         
         const twitterUser = tokenData.user;
+        
+        // Log for debugging
+        console.log('Token data received:', {
+          hasUser: !!tokenData.user,
+          hasSupabaseUser: !!tokenData.supabase_user,
+          supabaseUser: tokenData.supabase_user,
+        });
 
         // Clear stored OAuth data
         oauthService.clearStoredData();
