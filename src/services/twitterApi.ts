@@ -7,6 +7,7 @@ export interface TwitterTokens {
   expires_in: number;
   token_type: string;
   scope?: string;
+  user?: TwitterUser; // User profile included from Edge Function
 }
 
 export interface TwitterUser {

@@ -484,34 +484,6 @@ export function LoginCard({ onSuccess }: LoginCardProps) {
                 <div className="flex-grow border-t border-white/5"></div>
               </div>
 
-              {/* Google Sign In */}
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                type="button"
-                className="w-full relative group/google"
-              >
-                <div className="absolute inset-0 bg-white/5 rounded-lg blur opacity-0 group-hover/google:opacity-70 transition-opacity duration-300" />
-                
-                <div className="relative overflow-hidden bg-white/5 text-white font-medium h-10 rounded-lg border border-white/10 hover:border-white/20 transition-all duration-300 flex items-center justify-center gap-2">
-                  <div className="w-4 h-4 flex items-center justify-center text-white/80 group-hover/google:text-white transition-colors duration-300">G</div>
-                  
-                  <span className="text-white/80 group-hover/google:text-white transition-colors text-xs">
-                    Sign in with Google
-                  </span>
-                  
-                  <motion.div 
-                    className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/5 to-white/0"
-                    initial={{ x: '-100%' }}
-                    whileHover={{ x: '100%' }}
-                    transition={{ 
-                      duration: 1, 
-                      ease: "easeInOut"
-                    }}
-                  />
-                </div>
-              </motion.button>
-
               {/* Sign up link */}
               <motion.p 
                 className="text-center text-xs text-white/60 mt-4"

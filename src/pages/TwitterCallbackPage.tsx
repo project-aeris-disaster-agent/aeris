@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getTwitterOAuthService } from '@/services/twitterOAuth';
-import { exchangeCodeForTokens, getTwitterUserProfile } from '@/services/twitterApi';
+import { exchangeCodeForTokens } from '@/services/twitterApi';
 import { AuthService } from '@/services/auth';
 import { supabase } from '@/lib/supabase';
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
@@ -55,24 +55,78 @@ export function TwitterCallbackPage() {
           return;
         }
 
-        // Check if user is authenticated
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          setStatus('error');
-          setMessage('Please sign in first before connecting Twitter.');
-          setTimeout(() => navigate('/auth'), 3000);
-          return;
-        }
-
         // Exchange code for tokens via Supabase Edge Function
+        // The Edge Function also fetches user profile (avoids CORS issues)
         const redirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI || `${window.location.origin}/auth/twitter/callback`;
         const tokenData = await exchangeCodeForTokens(code, codeVerifier, redirectUri);
         
-        // Fetch user profile from Twitter
-        const twitterUser = await getTwitterUserProfile(tokenData.access_token);
+        // User profile is already included in tokenData from Edge Function
+        if (!tokenData.user) {
+          throw new Error('Failed to fetch Twitter user profile');
+        }
+        
+        const twitterUser = tokenData.user;
 
         // Clear stored OAuth data
         oauthService.clearStoredData();
+
+        // Check if user already exists (by Twitter ID)
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('id, email')
+          .eq('twitter_user_id', twitterUser.id)
+          .single();
+
+        let user;
+        if (existingProfile) {
+          // User exists - get their auth user
+          const { data: { user: existingUser }, error: getUserError } = await supabase.auth.getUser();
+          
+          if (getUserError || !existingUser) {
+            // User exists in profiles but not in auth - create auth account
+            const email = existingProfile.email || `${twitterUser.username}@twitter.local`;
+            const { data: authData, error: signUpError } = await supabase.auth.signUp({
+              email: email,
+              password: crypto.randomUUID(),
+              options: {
+                data: {
+                  full_name: twitterUser.name,
+                  twitter_user_id: twitterUser.id,
+                  twitter_username: twitterUser.username,
+                },
+              },
+            });
+
+            if (signUpError || !authData.user) {
+              throw new Error('Failed to sign in. Please try again.');
+            }
+
+            user = authData.user;
+          } else {
+            user = existingUser;
+          }
+        } else {
+          // New user - create account via Supabase Auth
+          // Use Twitter username as email placeholder (will be updated later)
+          const email = `${twitterUser.username}@twitter.local`;
+          const { data: authData, error: signUpError } = await supabase.auth.signUp({
+            email: email,
+            password: crypto.randomUUID(), // Random password (user won't use email/password)
+            options: {
+              data: {
+                full_name: twitterUser.name,
+                twitter_user_id: twitterUser.id,
+                twitter_username: twitterUser.username,
+              },
+            },
+          });
+
+          if (signUpError || !authData.user) {
+            throw new Error('Failed to create account. Please try again.');
+          }
+
+          user = authData.user;
+        }
 
         // Store Twitter tokens and profile in Supabase
         const { error: linkError } = await AuthService.linkTwitterAccount({
@@ -86,13 +140,11 @@ export function TwitterCallbackPage() {
           throw new Error('Failed to save Twitter connection. Please try again.');
         }
 
-        // Update profile with Twitter name if not set
-        if (twitterUser.name && !user.user_metadata?.full_name) {
-          await AuthService.updateProfile({
-            full_name: twitterUser.name,
-            profile_photo_url: twitterUser.profile_image_url || null,
-          });
-        }
+        // Update profile with Twitter info
+        await AuthService.updateProfile({
+          full_name: twitterUser.name || user.user_metadata?.full_name,
+          profile_photo_url: twitterUser.profile_image_url || null,
+        });
 
         setStatus('success');
         setMessage(`Successfully connected to Twitter as @${twitterUser.username}! Redirecting...`);
