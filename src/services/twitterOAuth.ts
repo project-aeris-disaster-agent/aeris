@@ -85,6 +85,12 @@ export class TwitterOAuthService {
 
     const url = `https://twitter.com/i/oauth2/authorize?${params.toString()}`;
 
+    // Debug logging (remove in production)
+    if (import.meta.env.DEV) {
+      console.log('🔗 Twitter OAuth URL:', url.substring(0, 100) + '...');
+      console.log('📍 Redirect URI being used:', this.config.redirectUri);
+    }
+
     return { url, codeVerifier, state };
   }
 
@@ -134,6 +140,16 @@ export function getTwitterOAuthService(): TwitterOAuthService {
 
     if (!clientId) {
       throw new Error('VITE_TWITTER_CLIENT_ID is not set in environment variables');
+    }
+
+    // Debug logging (remove in production)
+    if (import.meta.env.DEV) {
+      console.log('🔐 Twitter OAuth Config:', {
+        clientId: clientId.substring(0, 10) + '...',
+        redirectUri,
+        scopes,
+        currentOrigin: window.location.origin,
+      });
     }
 
     twitterOAuthInstance = new TwitterOAuthService({
