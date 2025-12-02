@@ -71,61 +71,89 @@ export function TwitterCallbackPage() {
         oauthService.clearStoredData();
 
         // Check if user already exists (by Twitter ID)
-        const { data: existingProfile } = await supabase
+        const { data: existingProfile, error: profileError } = await supabase
           .from('profiles')
           .select('id, email')
           .eq('twitter_user_id', twitterUser.id)
-          .single();
+          .maybeSingle();
 
         let user;
-        if (existingProfile) {
-          // User exists - get their auth user
+        
+        // Generate a valid email format (Supabase requires valid email domains)
+        // Use a format that Supabase accepts: {twitter_id}@twitter-oauth.app
+        const email = `${twitterUser.id.replace(/[^a-zA-Z0-9]/g, '_')}@twitter-oauth.app`;
+        const password = `Twitter_${crypto.randomUUID().replace(/-/g, '')}${Math.random().toString(36).slice(2, 8)}!`; // Valid password format
+
+        if (existingProfile && !profileError) {
+          // User exists in profiles - try to get their auth user
           const { data: { user: existingUser }, error: getUserError } = await supabase.auth.getUser();
           
-          if (getUserError || !existingUser) {
-            // User exists in profiles but not in auth - create auth account
-            const email = existingProfile.email || `${twitterUser.username}@twitter.local`;
+          if (getUserError || !existingUser || existingUser.id !== existingProfile.id) {
+            // User exists in profiles but not signed in - sign them up with same email
             const { data: authData, error: signUpError } = await supabase.auth.signUp({
-              email: email,
-              password: crypto.randomUUID(),
+              email: existingProfile.email || email,
+              password: password,
               options: {
                 data: {
                   full_name: twitterUser.name,
                   twitter_user_id: twitterUser.id,
                   twitter_username: twitterUser.username,
                 },
+                emailRedirectTo: `${window.location.origin}/home`,
               },
             });
 
-            if (signUpError || !authData.user) {
-              throw new Error('Failed to sign in. Please try again.');
+            if (signUpError) {
+              // If email already exists, try to sign in
+              if (signUpError.message?.includes('already registered')) {
+                // User exists - we'll handle this after storing tokens
+                const { data: { user: signInUser } } = await supabase.auth.getUser();
+                user = signInUser;
+              } else {
+                throw new Error(`Failed to sign in: ${signUpError.message}`);
+              }
+            } else if (authData.user) {
+              user = authData.user;
             }
-
-            user = authData.user;
           } else {
             user = existingUser;
           }
         } else {
           // New user - create account via Supabase Auth
-          // Use Twitter username as email placeholder (will be updated later)
-          const email = `${twitterUser.username}@twitter.local`;
           const { data: authData, error: signUpError } = await supabase.auth.signUp({
             email: email,
-            password: crypto.randomUUID(), // Random password (user won't use email/password)
+            password: password,
             options: {
               data: {
                 full_name: twitterUser.name,
                 twitter_user_id: twitterUser.id,
                 twitter_username: twitterUser.username,
               },
+              emailRedirectTo: `${window.location.origin}/home`,
             },
           });
 
-          if (signUpError || !authData.user) {
+          if (signUpError) {
+            // If user already exists, try to get existing user
+            if (signUpError.message?.includes('already registered')) {
+              const { data: { user: existingUser } } = await supabase.auth.getUser();
+              if (existingUser) {
+                user = existingUser;
+              } else {
+                throw new Error('Account exists but could not sign in. Please try email/password login.');
+              }
+            } else {
+              throw new Error(`Failed to create account: ${signUpError.message}`);
+            }
+          } else if (authData.user) {
+            user = authData.user;
+          } else {
             throw new Error('Failed to create account. Please try again.');
           }
+        }
 
-          user = authData.user;
+        if (!user) {
+          throw new Error('Failed to authenticate user. Please try again.');
         }
 
         // Store Twitter tokens and profile in Supabase
@@ -149,10 +177,8 @@ export function TwitterCallbackPage() {
         setStatus('success');
         setMessage(`Successfully connected to Twitter as @${twitterUser.username}! Redirecting...`);
 
-        // Redirect to home/dashboard
-        setTimeout(() => {
-          navigate('/home');
-        }, 2000);
+        // Redirect to home/dashboard immediately (no delay)
+        navigate('/home', { replace: true });
 
       } catch (error) {
         console.error('Twitter callback error:', error);

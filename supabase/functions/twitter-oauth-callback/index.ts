@@ -28,6 +28,8 @@ serve(async (req) => {
     // Get environment variables
     const clientId = Deno.env.get('TWITTER_CLIENT_ID');
     const clientSecret = Deno.env.get('TWITTER_CLIENT_SECRET');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') || Deno.env.get('VITE_SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!clientId || !clientSecret) {
       return new Response(
