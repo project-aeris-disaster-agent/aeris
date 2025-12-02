@@ -62,6 +62,7 @@ export function TwitterCallbackPage() {
         
         // Check for error from Edge Function
         if ((tokenData as any).error) {
+          console.error('Edge Function returned error:', (tokenData as any).error);
           throw new Error((tokenData as any).error);
         }
         
@@ -77,7 +78,14 @@ export function TwitterCallbackPage() {
           hasUser: !!tokenData.user,
           hasSupabaseUser: !!tokenData.supabase_user,
           supabaseUser: tokenData.supabase_user,
+          twitterUser: twitterUser.username,
         });
+        
+        // If no supabase_user, Edge Function failed to create user
+        if (!tokenData.supabase_user) {
+          console.error('Edge Function did not create user. Response:', tokenData);
+          throw new Error('Failed to create account. The server could not create your user account. Please try again or contact support.');
+        }
 
         // Clear stored OAuth data
         oauthService.clearStoredData();
