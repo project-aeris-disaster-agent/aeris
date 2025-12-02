@@ -79,6 +79,7 @@ serve(async (req) => {
 
     // Create or get Supabase user using admin API (bypasses email validation)
     let supabaseUser = null;
+    let userPassword = null;
     if (userData && supabaseUrl && supabaseServiceKey) {
       const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
         auth: {
@@ -117,17 +118,7 @@ serve(async (req) => {
 
         if (!createError && newUser.user) {
           supabaseUser = newUser.user;
-          
-          // Generate a session for the new user
-          const { data: sessionData } = await supabaseAdmin.auth.admin.generateLink({
-            type: 'magiclink',
-            email: email,
-          });
-          
-          if (sessionData?.properties?.hashed_token) {
-            // Store session info for frontend
-            supabaseUser.session_token = sessionData.properties.hashed_token;
-          }
+          userPassword = password; // Return password so frontend can sign in
         }
       }
     }
@@ -143,6 +134,7 @@ serve(async (req) => {
         supabase_user: supabaseUser ? {
           id: supabaseUser.id,
           email: supabaseUser.email,
+          password: userPassword, // Temporary password for sign-in
         } : null,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
