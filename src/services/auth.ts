@@ -27,6 +27,11 @@ export class AuthService {
    * Sign up a new user with email and password
    */
   static async signUp(data: SignUpData): Promise<AuthResponse> {
+    // Use current origin for email verification redirect (works in production)
+    const redirectTo = typeof window !== 'undefined' 
+      ? `${window.location.origin}/auth/callback`
+      : undefined;
+
     const { data: authData, error } = await supabase.auth.signUp({
       email: data.email,
       password: data.password,
@@ -35,6 +40,7 @@ export class AuthService {
           full_name: data.full_name,
           phone: data.phone,
         },
+        emailRedirectTo: redirectTo,
       },
     });
 
@@ -131,10 +137,10 @@ export class AuthService {
       return { error: new Error('User not authenticated') };
     }
 
-    const { error } = await supabase
-      .from('profiles')
+    const { error } = await ((supabase
+      .from('profiles') as any)
       .update(updates)
-      .eq('id', user.id);
+      .eq('id', user.id));
 
     return { error };
   }
@@ -153,13 +159,13 @@ export class AuthService {
       return { error: new Error('User not authenticated') };
     }
 
-    const { error } = await supabase
-      .from('profiles')
+    const { error } = await ((supabase
+      .from('profiles') as any)
       .update({
         ...data,
         twitter_connected_at: new Date().toISOString(),
       })
-      .eq('id', user.id);
+      .eq('id', user.id));
 
     return { error };
   }
@@ -177,24 +183,64 @@ export class AuthService {
     }
 
     // Get current wallet addresses
-    const { data: profile } = await supabase
-      .from('profiles')
+    const { data: profile, error: profileError } = await ((supabase
+      .from('profiles') as any)
       .select('wallet_addresses')
       .eq('id', user.id)
-      .single();
+      .single());
+
+    if (profileError) {
+      return { error: profileError };
+    }
 
     const currentAddresses = (profile?.wallet_addresses as string[]) || [];
     const updatedAddresses = [...currentAddresses, data.wallet_address];
 
-    const { error } = await supabase
-      .from('profiles')
+    const { error } = await ((supabase
+      .from('profiles') as any)
       .update({
         wallet_address: data.wallet_address,
         wallet_addresses: updatedAddresses,
         wallet_network: data.wallet_network || 'ethereum',
       })
-      .eq('id', user.id);
+      .eq('id', user.id));
 
+    return { error };
+  }
+
+  /**
+   * Logout - Clears Twitter data and signs out the user
+   */
+  static async logout(): Promise<{ error: any }> {
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    // Clear Twitter data from profile if user exists
+    if (user) {
+      const { error: profileError } = await ((supabase
+        .from('profiles') as any)
+        .update({
+          twitter_user_id: null,
+          twitter_username: null,
+          twitter_access_token: null,
+          twitter_refresh_token: null,
+          twitter_connected_at: null,
+        })
+        .eq('id', user.id));
+
+      if (profileError) {
+        console.error('Error clearing Twitter data:', profileError);
+        // Continue with logout even if clearing Twitter data fails
+      }
+    }
+
+    // Clear Twitter OAuth sessionStorage data
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('twitter_code_verifier');
+      sessionStorage.removeItem('twitter_state');
+    }
+
+    // Sign out from Supabase
+    const { error } = await supabase.auth.signOut();
     return { error };
   }
 }

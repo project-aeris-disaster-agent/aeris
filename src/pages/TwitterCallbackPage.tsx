@@ -63,12 +63,14 @@ export function TwitterCallbackPage() {
         // Check for error from Edge Function
         if ((tokenData as any).error) {
           console.error('Edge Function returned error:', (tokenData as any).error);
-          throw new Error((tokenData as any).error);
+          const errorDetails = (tokenData as any).details ? ` Details: ${(tokenData as any).details}` : '';
+          throw new Error(`${(tokenData as any).error}${errorDetails}`);
         }
         
         // User profile is already included in tokenData from Edge Function
         if (!tokenData.user) {
-          throw new Error('Failed to fetch Twitter user profile');
+          console.error('Token data received but no user:', tokenData);
+          throw new Error('Failed to fetch Twitter user profile. The Twitter API did not return user information.');
         }
         
         const twitterUser = tokenData.user;
@@ -90,61 +92,38 @@ export function TwitterCallbackPage() {
         // Clear stored OAuth data
         oauthService.clearStoredData();
 
-        // Edge Function creates user with admin privileges (bypasses email validation)
+        // Edge Function creates/finds user with admin privileges (bypasses email validation)
         let user;
         if (tokenData.supabase_user) {
-          // User was created by Edge Function - sign them in
+          const isExistingUser = tokenData.supabase_user.is_existing;
+          console.log(`${isExistingUser ? 'Existing' : 'New'} user detected:`, tokenData.supabase_user.email);
+
+          // Both new and existing users now get a temporary password from Edge Function
           if (tokenData.supabase_user.password) {
-            // New user - sign in with password from Edge Function
             const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
               email: tokenData.supabase_user.email,
               password: tokenData.supabase_user.password,
             });
 
             if (signInError || !authData.user) {
+              console.error('Sign in failed:', signInError);
               throw new Error(`Failed to sign in: ${signInError?.message || 'Unknown error'}`);
             }
 
             user = authData.user;
+            console.log('Successfully signed in user:', user.id);
           } else {
-            // Existing user - check if already signed in
-            const { data: { user: currentUser }, error: getUserError } = await supabase.auth.getUser();
+            // Fallback: Edge Function couldn't set password, check if already signed in
+            const { data: { user: currentUser } } = await supabase.auth.getUser();
             
-            if (getUserError || !currentUser || currentUser.id !== tokenData.supabase_user.id) {
-              // User exists but not signed in - check profile
-              const { data: profile } = await supabase
-                .from('profiles')
-                .select('id')
-                .eq('id', tokenData.supabase_user.id)
-                .single();
-              
-              if (profile) {
-                throw new Error('User exists but session not established. Please sign in manually.');
-              } else {
-                throw new Error('Failed to authenticate user. Please try again.');
-              }
-            } else {
+            if (currentUser && currentUser.id === tokenData.supabase_user.id) {
               user = currentUser;
+            } else {
+              throw new Error('Authentication failed. Please try again.');
             }
           }
         } else {
-          // Fallback: Check if user exists and sign them in
-          const { data: existingProfile } = await supabase
-            .from('profiles')
-            .select('id, email')
-            .eq('twitter_user_id', twitterUser.id)
-            .maybeSingle();
-
-          if (existingProfile) {
-            const { data: { user: existingUser } } = await supabase.auth.getUser();
-            if (existingUser && existingUser.id === existingProfile.id) {
-              user = existingUser;
-            } else {
-              throw new Error('Failed to sign in. Please try again.');
-            }
-          } else {
-            throw new Error('Failed to create account. Please try again.');
-          }
+          throw new Error('Server did not return user information. Please try again.');
         }
 
         if (!user) {
@@ -165,8 +144,8 @@ export function TwitterCallbackPage() {
 
         // Update profile with Twitter info
         await AuthService.updateProfile({
-          full_name: twitterUser.name || user.user_metadata?.full_name,
-          profile_photo_url: twitterUser.profile_image_url || null,
+          full_name: twitterUser.name || user.user_metadata?.full_name || undefined,
+          profile_photo_url: twitterUser.profile_image_url ?? undefined,
         });
 
         setStatus('success');

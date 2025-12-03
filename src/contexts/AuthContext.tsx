@@ -10,6 +10,7 @@ interface AuthContextType {
   signUp: (email: string, password: string, fullName?: string) => Promise<{ error: any }>;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
+  logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: any }>;
 }
 
@@ -56,6 +57,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSession(null);
   };
 
+  const logout = async () => {
+    await AuthService.logout();
+    setUser(null);
+    setSession(null);
+  };
+
   const resetPassword = async (email: string) => {
     return await AuthService.resetPassword(email);
   };
@@ -67,6 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signUp,
     signIn,
     signOut,
+    logout,
     resetPassword,
   };
 

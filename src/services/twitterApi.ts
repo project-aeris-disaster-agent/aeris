@@ -11,8 +11,9 @@ export interface TwitterTokens {
   supabase_user?: {
     id: string;
     email: string;
-    password?: string; // Temporary password for sign-in (only for new users)
-  }; // Supabase user created by Edge Function
+    password?: string; // Temporary password for sign-in (for both new and existing users)
+    is_existing?: boolean; // Whether this is an existing user
+  }; // Supabase user created/found by Edge Function
 }
 
 export interface TwitterUser {
@@ -67,34 +68,42 @@ export async function exchangeCodeForTokens(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Token exchange failed' }));
-    throw new Error(error.message || 'Failed to exchange authorization code');
+    const error = await response.json().catch(() => ({ error: 'Token exchange failed', message: 'Token exchange failed' }));
+    const errorMessage = error.error || error.message || 'Failed to exchange authorization code';
+    
+    // Handle error details properly (stringify if it's an object)
+    let errorDetails = '';
+    if (error.details) {
+      if (typeof error.details === 'string') {
+        errorDetails = ` ${error.details}`;
+      } else {
+        errorDetails = ` ${JSON.stringify(error.details)}`;
+      }
+    }
+    
+    // Special message for rate limit errors
+    if (response.status === 429 || error.status === 429) {
+      const retryAfter = error.retryAfter ? ` Please try again in ${error.retryAfter} seconds.` : ' Please wait a few minutes and try again.';
+      throw new Error(`Twitter API rate limit exceeded.${retryAfter}`);
+    }
+    
+    throw new Error(`${errorMessage}${errorDetails}`);
   }
 
-  return await response.json();
-}
-
-/**
- * Fetch Twitter user profile
- */
-export async function getTwitterUserProfile(accessToken: string): Promise<TwitterUser> {
-  const response = await fetch('https://api.twitter.com/2/users/me?user.fields=description,profile_image_url,verified,public_metrics', {
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to fetch user profile' }));
-    throw new Error(error.message || 'Failed to fetch Twitter user profile');
+  const result = await response.json();
+  
+  // Check if the response contains an error field (even if status is 200)
+  if (result.error) {
+    throw new Error(result.error);
   }
-
-  const data = await response.json();
-  return data.data;
+  
+  return result;
 }
 
 /**
  * Fetch user tweets
+ * NOTE: This function directly calls Twitter API and will cause CORS issues if called from frontend.
+ * Should be moved to an Edge Function when implementing tweet fetching functionality.
  */
 export async function getUserTweets(
   accessToken: string,

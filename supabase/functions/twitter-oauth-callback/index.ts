@@ -64,23 +64,168 @@ serve(async (req) => {
 
     const tokens = await tokenResponse.json();
 
-    // Fetch user profile
-    const userResponse = await fetch('https://api.twitter.com/2/users/me?user.fields=description,profile_image_url,verified,public_metrics', {
-      headers: {
-        'Authorization': `Bearer ${tokens.access_token}`,
-      },
-    });
+    // Fetch user profile with retry logic for rate limits
+    console.log('Fetching Twitter user profile with access token...');
+    
+    let userResponse;
+    let retryCount = 0;
+    const maxRetries = 1; // Only retry once to reduce API calls
+    const baseDelay = 60000; // Wait 60 seconds instead of 2 seconds
+    let lastErrorResponse = null;
+    
+    while (retryCount <= maxRetries) {
+      userResponse = await fetch('https://api.twitter.com/2/users/me?user.fields=description,profile_image_url,verified,public_metrics', {
+        headers: {
+          'Authorization': `Bearer ${tokens.access_token}`,
+        },
+      });
+
+      console.log(`Twitter user profile response status (attempt ${retryCount + 1}):`, userResponse.status, userResponse.statusText);
+
+      // If successful, break
+      if (userResponse.ok) {
+        break;
+      }
+
+      // Handle 429 rate limit - wait longer and only retry once
+      if (userResponse.status === 429 && retryCount < maxRetries) {
+        // Store error response before retrying
+        lastErrorResponse = userResponse;
+        const retryAfter = userResponse.headers.get('Retry-After');
+        // Use Retry-After header if available, otherwise wait 60 seconds
+        const delay = retryAfter ? parseInt(retryAfter) * 1000 : baseDelay;
+        
+        console.warn(`Rate limited by Twitter API. Waiting ${delay/1000}s before single retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        retryCount++;
+        continue;
+      }
+      
+      // If it's not a 429 or we've exhausted retries, break
+      lastErrorResponse = userResponse;
+      break;
+    }
+    
+    // If we exhausted retries and still have a 429, use the last error response
+    if (!userResponse.ok && lastErrorResponse && lastErrorResponse.status === 429) {
+      userResponse = lastErrorResponse;
+    }
 
     let userData = null;
     if (userResponse.ok) {
-      const userResult = await userResponse.json();
-      userData = userResult.data;
+      try {
+        const responseText = await userResponse.text();
+        console.log('Twitter API response text:', responseText.substring(0, 500)); // Log first 500 chars
+        
+        const userResult = JSON.parse(responseText);
+        console.log('Parsed Twitter API response:', JSON.stringify(userResult).substring(0, 500));
+        
+        userData = userResult.data;
+        
+        // Log if data structure is unexpected
+        if (!userData && userResult) {
+          console.warn('Twitter API response structure unexpected:', JSON.stringify(userResult));
+          // Try to use the result directly if it's not wrapped in 'data'
+          if (userResult.id && userResult.username) {
+            console.log('Using userResult directly as userData');
+            userData = userResult;
+          } else if (userResult.errors) {
+            console.error('Twitter API returned errors:', userResult.errors);
+            return new Response(
+              JSON.stringify({ 
+                error: 'Twitter API returned errors',
+                details: userResult.errors,
+              }),
+              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        } else if (userData) {
+          console.log('Successfully extracted userData:', { id: userData.id, username: userData.username });
+        }
+      } catch (parseError) {
+        console.error('Failed to parse Twitter user profile response:', parseError);
+        // Response already read above, can't read again - use error message
+        return new Response(
+          JSON.stringify({ 
+            error: 'Failed to parse Twitter user profile response',
+            details: parseError.message || 'Unknown parsing error',
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    } else {
+      // Log error details for debugging
+      const errorText = await userResponse.text();
+      let errorJson = null;
+      try {
+        errorJson = JSON.parse(errorText);
+      } catch {
+        // Not JSON, use as text
+      }
+      
+      console.error('Failed to fetch Twitter user profile:', {
+        status: userResponse.status,
+        statusText: userResponse.statusText,
+        error: errorJson || errorText,
+        retryCount,
+      });
+      
+      // Special handling for 429 rate limit errors
+      if (userResponse.status === 429) {
+        const retryAfter = userResponse.headers.get('Retry-After');
+        const errorDetails = errorJson ? JSON.stringify(errorJson) : errorText;
+        
+        return new Response(
+          JSON.stringify({ 
+            error: 'Twitter API rate limit exceeded. Please wait a few minutes and try again.',
+            details: errorDetails,
+            retryAfter: retryAfter || null,
+            status: 429,
+          }),
+          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      // Return error response with details for other errors
+      const errorDetails = errorJson ? JSON.stringify(errorJson) : errorText;
+      return new Response(
+        JSON.stringify({ 
+          error: `Failed to fetch Twitter user profile: ${userResponse.status} ${userResponse.statusText}`,
+          details: errorDetails,
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Ensure we have userData before proceeding
+    if (!userData || !userData.id || !userData.username) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'Twitter user profile data is missing or incomplete',
+          received: userData ? 'Partial data received' : 'No data received',
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Ensure we have valid userData before proceeding
+    if (!userData || !userData.id || !userData.username) {
+      console.error('User data validation failed:', { userData, hasId: !!userData?.id, hasUsername: !!userData?.username });
+      return new Response(
+        JSON.stringify({ 
+          error: 'Twitter user profile data is missing or incomplete',
+          received: userData ? 'Partial data received' : 'No data received',
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     // Create or get Supabase user using admin API (bypasses email validation)
     let supabaseUser = null;
     let userPassword = null;
-    if (userData && supabaseUrl && supabaseServiceKey) {
+    let isExistingUser = false;
+
+    if (supabaseUrl && supabaseServiceKey) {
       const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
         auth: {
           persistSession: false,
@@ -88,25 +233,80 @@ serve(async (req) => {
         },
       });
 
-      // Check if user exists by Twitter ID
+      // Generate the email format we use for Twitter users
+      const twitterEmail = `${userData.id.replace(/[^a-zA-Z0-9]/g, '_')}@twitter.localhost`;
+
+      // Check if user exists by Twitter ID in profiles
       const { data: existingProfile } = await supabaseAdmin
         .from('profiles')
         .select('id, email')
         .eq('twitter_user_id', userData.id)
         .maybeSingle();
 
+      // Also check if user exists by generated email (in case profile twitter_user_id wasn't set yet)
+      let existingAuthUser = null;
+      if (!existingProfile) {
+        const { data: usersList } = await supabaseAdmin.auth.admin.listUsers();
+        existingAuthUser = usersList?.users?.find(u => u.email === twitterEmail);
+      }
+
       if (existingProfile) {
-        // User exists - get their auth user
+        // User exists in profiles - get their auth user
+        console.log('Found existing user by twitter_user_id:', existingProfile.id);
         const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(existingProfile.id);
         supabaseUser = user;
+        isExistingUser = true;
+
+        // Generate a new temporary password for this session
+        const tempPassword = `Twitter_${crypto.randomUUID().replace(/-/g, '')}${Math.random().toString(36).slice(2, 8)}!`;
+        
+        // Update user's password temporarily for this sign-in
+        const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(existingProfile.id, {
+          password: tempPassword,
+        });
+
+        if (!updateError) {
+          userPassword = tempPassword;
+        } else {
+          console.error('Failed to update password for existing user:', updateError);
+        }
+
+      } else if (existingAuthUser) {
+        // User exists by email but profile doesn't have twitter_user_id set
+        console.log('Found existing user by email:', existingAuthUser.id);
+        supabaseUser = existingAuthUser;
+        isExistingUser = true;
+
+        // Generate a new temporary password for this session
+        const tempPassword = `Twitter_${crypto.randomUUID().replace(/-/g, '')}${Math.random().toString(36).slice(2, 8)}!`;
+        
+        // Update user's password temporarily for this sign-in
+        const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(existingAuthUser.id, {
+          password: tempPassword,
+        });
+
+        if (!updateError) {
+          userPassword = tempPassword;
+        } else {
+          console.error('Failed to update password for existing user:', updateError);
+        }
+
+        // Update the profile with twitter_user_id
+        await supabaseAdmin
+          .from('profiles')
+          .update({
+            twitter_user_id: userData.id,
+            twitter_username: userData.username,
+          })
+          .eq('id', existingAuthUser.id);
+
       } else {
         // Create new user with admin API (bypasses email validation)
-        // Use a valid email format: {twitter_id}@twitter.localhost (localhost is valid)
-        const email = `${userData.id.replace(/[^a-zA-Z0-9]/g, '_')}@twitter.localhost`;
+        console.log('Creating new user for Twitter ID:', userData.id);
         const password = `Twitter_${crypto.randomUUID().replace(/-/g, '')}${Math.random().toString(36).slice(2, 8)}!`;
         
         const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-          email: email,
+          email: twitterEmail,
           password: password,
           email_confirm: true, // Auto-confirm email
           user_metadata: {
@@ -118,7 +318,6 @@ serve(async (req) => {
 
         if (createError) {
           console.error('Failed to create user:', createError);
-          // Continue anyway - return error in response
           return new Response(
             JSON.stringify({
               error: `Failed to create user: ${createError.message}`,
@@ -136,10 +335,64 @@ serve(async (req) => {
 
         if (newUser && newUser.user) {
           supabaseUser = newUser.user;
-          userPassword = password; // Return password so frontend can sign in
+          userPassword = password;
+          isExistingUser = false;
         } else {
           console.error('User creation returned no user:', newUser);
         }
+      }
+    } else {
+      console.error('Missing Supabase configuration:', {
+        hasSupabaseUrl: !!supabaseUrl,
+        hasSupabaseServiceKey: !!supabaseServiceKey,
+      });
+      return new Response(
+        JSON.stringify({ 
+          error: 'Server configuration error: Missing Supabase credentials',
+        }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Final validation before returning
+    if (!userData || !userData.id || !userData.username) {
+      console.error('User data missing at final return:', { userData });
+      return new Response(
+        JSON.stringify({ 
+          error: 'Failed to retrieve Twitter user profile',
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log('Successfully processed Twitter OAuth:', {
+      twitterUserId: userData.id,
+      twitterUsername: userData.username,
+      supabaseUserId: supabaseUser?.id,
+      isExistingUser,
+    });
+
+    // Cache the user profile data for reuse in character card generation
+    if (supabaseUrl && supabaseServiceKey && supabaseUser) {
+      try {
+        const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+          auth: { persistSession: false, autoRefreshToken: false }
+        });
+
+        // Store user profile in cache for character card generation
+        await supabaseAdmin
+          .from('twitter_data_cache')
+          .upsert({
+            user_id: supabaseUser.id,
+            profile_data: userData, // Full profile from Twitter
+            cached_at: new Date().toISOString(),
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
+          }, { onConflict: 'user_id' });
+
+        console.log('Cached Twitter user profile for reuse');
+      } catch (cacheError) {
+        console.error('Failed to cache user profile:', cacheError);
+        // Non-fatal, continue
       }
     }
 
@@ -154,7 +407,8 @@ serve(async (req) => {
         supabase_user: supabaseUser ? {
           id: supabaseUser.id,
           email: supabaseUser.email,
-          password: userPassword, // Temporary password for sign-in
+          password: userPassword, // Temporary password for sign-in (works for both new and existing users now)
+          is_existing: isExistingUser,
         } : null,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -166,4 +420,3 @@ serve(async (req) => {
     );
   }
 });
-
