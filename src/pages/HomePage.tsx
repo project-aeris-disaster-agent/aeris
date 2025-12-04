@@ -27,6 +27,7 @@ import {
   LogOut,
   Award
 } from 'lucide-react';
+import { AutomationDropdown } from '@/components/AutomationDropdown';
 
 interface Message {
   id: string;
@@ -635,6 +636,17 @@ export function HomePage() {
                 </div>
               </div>
             </div>
+            
+            {/* Automation Button - Below Chat Window */}
+            {hasAlterEgo && characterCard && sessionId && (
+              <AutomationDropdown
+                userId={user?.id || ''}
+                characterCard={characterCard}
+                conversationHistory={messages}
+                sessionId={sessionId}
+                connectedPlatforms={socialAutomation}
+              />
+            )}
           </div>
 
           {/* Right Panel - Social Media Automation */}
