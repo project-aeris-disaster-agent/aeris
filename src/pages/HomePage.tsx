@@ -6,7 +6,7 @@ import { CharacterCardModal } from '@/components/CharacterCardModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { getCharacterCard } from '@/services/characterCardService';
-import type { ElizaOSCharacterCard } from '@/types/database';
+import type { ElizaOSCharacterCard, ProfileScores, LetterGrade } from '@/types/database';
 import { 
   Send, 
   Sparkles, 
@@ -15,11 +15,12 @@ import {
   Twitter,
   Users,
   Heart,
-  Repeat2,
-  Eye,
+  TrendingUp,
+  FileText,
   Zap,
   Bot,
-  LogOut
+  LogOut,
+  Award
 } from 'lucide-react';
 
 interface Message {
@@ -36,6 +37,33 @@ interface UserProfile {
   profile_photo_url: string | null;
   character_card_generated: boolean;
 }
+
+interface TwitterMetricsState {
+  followers_count: number;
+  following_count: number;
+  tweet_count: number;
+}
+
+// Grade color mapping
+const gradeColors: Record<LetterGrade, string> = {
+  'A+': 'text-emerald-400',
+  'A': 'text-green-400',
+  'B+': 'text-cyan-400',
+  'B': 'text-blue-400',
+  'C+': 'text-yellow-400',
+  'C': 'text-orange-400',
+  'D': 'text-red-400',
+};
+
+const gradeBgColors: Record<LetterGrade, string> = {
+  'A+': 'from-emerald-500/20 to-emerald-600/20 border-emerald-500/50',
+  'A': 'from-green-500/20 to-green-600/20 border-green-500/50',
+  'B+': 'from-cyan-500/20 to-cyan-600/20 border-cyan-500/50',
+  'B': 'from-blue-500/20 to-blue-600/20 border-blue-500/50',
+  'C+': 'from-yellow-500/20 to-yellow-600/20 border-yellow-500/50',
+  'C': 'from-orange-500/20 to-orange-600/20 border-orange-500/50',
+  'D': 'from-red-500/20 to-red-600/20 border-red-500/50',
+};
 
 const FarcasterIcon = ({ className }: { className?: string }) => (
   <svg className={className} viewBox="0 0 24 24" fill="currentColor">
@@ -73,6 +101,8 @@ export function HomePage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [twitterMetrics, setTwitterMetrics] = useState<TwitterMetricsState | null>(null);
+  const [profileScores, setProfileScores] = useState<ProfileScores | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Fetch user profile and character card status
@@ -101,12 +131,21 @@ export function HomePage() {
           setUserProfile(typedProfile);
           setHasAlterEgo(typedProfile.character_card_generated || false);
 
-          // If user has a character card, fetch it
+          // If user has a character card, fetch it along with metadata
           if (typedProfile.character_card_generated) {
             try {
               const card = await getCharacterCard(user.id);
               if (card) {
                 setCharacterCard(card.card_data);
+                
+                // Extract metrics and scores from generation_metadata
+                const metadata = card.generation_metadata as any;
+                if (metadata?.twitter_metrics) {
+                  setTwitterMetrics(metadata.twitter_metrics);
+                }
+                if (metadata?.profile_scores) {
+                  setProfileScores(metadata.profile_scores);
+                }
               }
             } catch (cardErr) {
               console.error('Error fetching character card:', cardErr);
@@ -154,9 +193,26 @@ export function HomePage() {
     setIsModalOpen(true);
   };
 
-  const handleCharacterCardSuccess = (card: ElizaOSCharacterCard) => {
+  const handleCharacterCardSuccess = (
+    card: ElizaOSCharacterCard, 
+    twitterProfile?: { followers_count?: number; following_count?: number; tweet_count?: number },
+    scores?: ProfileScores
+  ) => {
     setCharacterCard(card);
     setHasAlterEgo(true);
+    
+    // Store metrics and scores
+    if (twitterProfile) {
+      setTwitterMetrics({
+        followers_count: twitterProfile.followers_count || 0,
+        following_count: twitterProfile.following_count || 0,
+        tweet_count: twitterProfile.tweet_count || 0,
+      });
+    }
+    if (scores) {
+      setProfileScores(scores);
+    }
+    
     // Update the initial message to reflect the character's personality
     setMessages([{
       id: '1',
@@ -166,13 +222,11 @@ export function HomePage() {
     }]);
   };
 
-  // Compute display stats from profile or character card
-  const displayStats = {
-    followers: userProfile?.twitter_username ? '...' : '12.4K',
-    following: '...',
-    tweets: '...',
-    likes: '...',
-    impressions: '...',
+  // Format number for display (e.g., 12400 -> "12.4K")
+  const formatNumber = (num: number): string => {
+    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+    return num.toString();
   };
 
   const handleSendMessage = async () => {
@@ -263,6 +317,18 @@ export function HomePage() {
               <div className="absolute bottom-0 left-0 w-6 h-6 border-l-2 border-b-2 border-pink-500" />
               <div className="absolute bottom-0 right-0 w-6 h-6 border-r-2 border-b-2 border-pink-500" />
               
+              {/* Final Rating Badge - Upper Left */}
+              {profileScores && (
+                <div className={`absolute top-2 left-2 px-2 py-1 rounded-lg bg-gradient-to-r ${gradeBgColors[profileScores.finalRating]} border backdrop-blur-sm`}>
+                  <div className="flex items-center gap-1">
+                    <Award className={`w-3 h-3 ${gradeColors[profileScores.finalRating]}`} />
+                    <span className={`font-bold text-sm ${gradeColors[profileScores.finalRating]}`}>
+                      {profileScores.finalRating}
+                    </span>
+                  </div>
+                </div>
+              )}
+              
               {/* Profile Image */}
               <div className="relative mx-auto w-28 h-28 sm:w-32 sm:h-32">
                 <motion.div 
@@ -292,33 +358,43 @@ export function HomePage() {
                 </p>
               </div>
               
-              {/* Stats */}
+              {/* Real Metrics - Followers & Following */}
               <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
                 <div className="bg-white/5 rounded-lg p-2">
                   <Users className="w-3 h-3 mx-auto text-cyan-400 mb-0.5" />
-                  <p className="text-white font-bold text-xs">{displayStats.followers}</p>
+                  <p className="text-white font-bold text-xs">
+                    {twitterMetrics ? formatNumber(twitterMetrics.followers_count) : '--'}
+                  </p>
                   <p className="text-white/40 text-[10px]">Followers</p>
                 </div>
                 <div className="bg-white/5 rounded-lg p-2">
                   <Heart className="w-3 h-3 mx-auto text-pink-500 mb-0.5" />
-                  <p className="text-white font-bold text-xs">{displayStats.likes}</p>
-                  <p className="text-white/40 text-[10px]">Likes</p>
+                  <p className={`font-bold text-xs ${profileScores ? gradeColors[profileScores.engagement] : 'text-white'}`}>
+                    {profileScores ? profileScores.engagement : '--'}
+                  </p>
+                  <p className="text-white/40 text-[10px]">Engage</p>
                 </div>
                 <div className="bg-white/5 rounded-lg p-2">
-                  <Eye className="w-3 h-3 mx-auto text-purple-400 mb-0.5" />
-                  <p className="text-white font-bold text-xs">{displayStats.impressions}</p>
-                  <p className="text-white/40 text-[10px]">Views</p>
+                  <TrendingUp className="w-3 h-3 mx-auto text-purple-400 mb-0.5" />
+                  <p className={`font-bold text-xs ${profileScores ? gradeColors[profileScores.reach] : 'text-white'}`}>
+                    {profileScores ? profileScores.reach : '--'}
+                  </p>
+                  <p className="text-white/40 text-[10px]">Reach</p>
                 </div>
               </div>
               
               <div className="mt-1.5 grid grid-cols-2 gap-1.5 text-center">
                 <div className="bg-white/5 rounded-lg p-1.5 flex items-center justify-center gap-1">
-                  <Repeat2 className="w-3 h-3 text-green-400" />
-                  <span className="text-white/70 text-[10px]">{displayStats.tweets} Tweets</span>
+                  <FileText className="w-3 h-3 text-green-400" />
+                  <span className="text-white/70 text-[10px]">
+                    {twitterMetrics ? formatNumber(twitterMetrics.tweet_count) : '--'} Tweets
+                  </span>
                 </div>
                 <div className="bg-white/5 rounded-lg p-1.5 flex items-center justify-center gap-1">
                   <Users className="w-3 h-3 text-blue-400" />
-                  <span className="text-white/70 text-[10px]">{displayStats.following} Following</span>
+                  <span className="text-white/70 text-[10px]">
+                    {twitterMetrics ? formatNumber(twitterMetrics.following_count) : '--'} Following
+                  </span>
                 </div>
               </div>
             </div>

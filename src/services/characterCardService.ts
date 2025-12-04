@@ -9,6 +9,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as SupabaseClient<any>;
 
+import type { LetterGrade, ProfileScores, TwitterMetrics } from '@/types/database';
+
 interface GenerateCharacterCardResponse {
   success: boolean;
   character_card: ElizaOSCharacterCard;
@@ -18,7 +20,11 @@ interface GenerateCharacterCardResponse {
     name: string;
     profile_image_url?: string;
     followers_count?: number;
+    following_count?: number;
+    tweet_count?: number;
+    listed_count?: number;
   };
+  profile_scores: ProfileScores;
   analysis_metadata: {
     method: string;
     tweets_analyzed: number;
@@ -31,6 +37,8 @@ interface GenerateCharacterCardResponse {
     };
   };
 }
+
+export type { ProfileScores, LetterGrade, TwitterMetrics };
 
 // Re-export for convenience
 export type CharacterCardRecord = CharacterCardsRow;

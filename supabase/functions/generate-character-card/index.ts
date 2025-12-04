@@ -130,6 +130,125 @@ const USE_TWITTER_API_FOR_TWEETS = true;
 const TWEETS_TO_FETCH = 20;
 
 // ============================================================================
+// SCORING SYSTEM
+// ============================================================================
+
+type LetterGrade = 'A+' | 'A' | 'B+' | 'B' | 'C+' | 'C' | 'D';
+
+interface ProfileScores {
+  finalRating: LetterGrade;
+  engagement: LetterGrade;
+  reach: LetterGrade;
+  content: LetterGrade;
+}
+
+// Calculate engagement score based on likes/retweets per follower
+function calculateEngagementScore(
+  tweets: TwitterTweet[],
+  followersCount: number
+): LetterGrade {
+  if (tweets.length === 0 || followersCount === 0) return 'C';
+  
+  const totalLikes = tweets.reduce((sum, t) => sum + (t.public_metrics?.like_count || 0), 0);
+  const totalRetweets = tweets.reduce((sum, t) => sum + (t.public_metrics?.retweet_count || 0), 0);
+  const avgEngagement = (totalLikes + totalRetweets * 2) / tweets.length;
+  
+  // Engagement rate = avg engagement per tweet / followers
+  const engagementRate = avgEngagement / followersCount;
+  
+  // Scoring thresholds (industry standard engagement rate ~1-3%)
+  if (engagementRate >= 0.05) return 'A+';  // 5%+ exceptional
+  if (engagementRate >= 0.03) return 'A';   // 3-5% excellent
+  if (engagementRate >= 0.02) return 'B+';  // 2-3% great
+  if (engagementRate >= 0.01) return 'B';   // 1-2% good
+  if (engagementRate >= 0.005) return 'C+'; // 0.5-1% average
+  if (engagementRate >= 0.002) return 'C';  // 0.2-0.5% below average
+  return 'D';
+}
+
+// Calculate reach score based on follower count
+function calculateReachScore(followersCount: number): LetterGrade {
+  if (followersCount >= 100000) return 'A+';  // 100K+ major influencer
+  if (followersCount >= 50000) return 'A';    // 50-100K influencer
+  if (followersCount >= 10000) return 'B+';   // 10-50K micro-influencer
+  if (followersCount >= 5000) return 'B';     // 5-10K growing
+  if (followersCount >= 1000) return 'C+';    // 1-5K established
+  if (followersCount >= 500) return 'C';      // 500-1K building
+  return 'D';                                  // <500 starting
+}
+
+// Calculate content score based on Grok's analysis
+function calculateContentScore(analysis: DeepPersonalityAnalysis): LetterGrade {
+  let score = 0;
+  
+  // Evaluate expertise depth
+  if (analysis.expertiseAreas.length >= 3) score += 2;
+  else if (analysis.expertiseAreas.length >= 1) score += 1;
+  
+  // Evaluate vocabulary sophistication
+  if (analysis.vocabularyLevel === 'technical' || analysis.vocabularyLevel === 'academic') score += 2;
+  else if (analysis.vocabularyLevel === 'mixed') score += 1;
+  
+  // Evaluate core traits (evidence-based)
+  if (analysis.coreTraits.length >= 4) score += 2;
+  else if (analysis.coreTraits.length >= 2) score += 1;
+  
+  // Evaluate community role
+  if (analysis.communityRole === 'thought-leader' || analysis.communityRole === 'creator') score += 2;
+  else if (analysis.communityRole === 'entertainer') score += 1;
+  
+  // Evaluate signature phrases (voice uniqueness)
+  if (analysis.signaturePhrases.length >= 3) score += 1;
+  
+  // Convert score to grade
+  if (score >= 8) return 'A+';
+  if (score >= 6) return 'A';
+  if (score >= 5) return 'B+';
+  if (score >= 4) return 'B';
+  if (score >= 3) return 'C+';
+  if (score >= 2) return 'C';
+  return 'D';
+}
+
+// Calculate final rating as weighted average
+function calculateFinalRating(
+  engagement: LetterGrade,
+  reach: LetterGrade,
+  content: LetterGrade
+): LetterGrade {
+  const gradeToNum: Record<LetterGrade, number> = {
+    'A+': 7, 'A': 6, 'B+': 5, 'B': 4, 'C+': 3, 'C': 2, 'D': 1
+  };
+  const numToGrade: LetterGrade[] = ['D', 'D', 'C', 'C+', 'B', 'B+', 'A', 'A+'];
+  
+  // Weighted: Engagement 40%, Content 35%, Reach 25%
+  const weighted = 
+    gradeToNum[engagement] * 0.4 +
+    gradeToNum[content] * 0.35 +
+    gradeToNum[reach] * 0.25;
+  
+  const index = Math.min(Math.round(weighted), 7);
+  return numToGrade[index];
+}
+
+function calculateProfileScores(
+  tweets: TwitterTweet[],
+  userProfile: TwitterUser,
+  analysis: DeepPersonalityAnalysis
+): ProfileScores {
+  const followersCount = userProfile.public_metrics?.followers_count || 0;
+  
+  const engagement = calculateEngagementScore(tweets, followersCount);
+  const reach = calculateReachScore(followersCount);
+  const content = calculateContentScore(analysis);
+  const finalRating = calculateFinalRating(engagement, reach, content);
+  
+  console.log(`Scores - Final: ${finalRating}, Engagement: ${engagement}, Reach: ${reach}, Content: ${content}`);
+  
+  return { finalRating, engagement, reach, content };
+}
+
+// ============================================================================
 // TWITTER API FUNCTIONS (Optimized for minimal API calls)
 // ============================================================================
 
@@ -995,6 +1114,9 @@ Always respond with valid JSON only. Be specific and evidence-based.`;
       }
     }
 
+    // Calculate profile scores
+    const scores = calculateProfileScores(tweets, userProfile, analysis);
+    
     console.log('=== Character Card Generation Complete ===');
 
     return new Response(
@@ -1007,7 +1129,11 @@ Always respond with valid JSON only. Be specific and evidence-based.`;
           name: userProfile.name,
           profile_image_url: userProfile.profile_image_url,
           followers_count: userProfile.public_metrics?.followers_count,
+          following_count: userProfile.public_metrics?.following_count,
+          tweet_count: userProfile.public_metrics?.tweet_count,
+          listed_count: userProfile.public_metrics?.listed_count,
         },
+        profile_scores: scores,
         analysis_metadata: {
           method: analysisMethod,
           tweets_analyzed: tweets.length,

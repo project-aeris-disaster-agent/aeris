@@ -17,7 +17,7 @@ import {
   ChevronUp,
   AlertCircle,
 } from 'lucide-react';
-import type { ElizaOSCharacterCard } from '@/types/database';
+import type { ElizaOSCharacterCard, ProfileScores } from '@/types/database';
 import {
   generateCharacterCard,
   saveCharacterCard,
@@ -25,12 +25,22 @@ import {
   getTwitterAccessToken,
 } from '@/services/characterCardService';
 
+interface TwitterProfileData {
+  id: string;
+  username: string;
+  name: string;
+  profile_image_url?: string;
+  followers_count?: number;
+  following_count?: number;
+  tweet_count?: number;
+}
+
 interface CharacterCardModalProps {
   isOpen: boolean;
   onClose: () => void;
   userId: string;
   twitterAccessToken?: string;
-  onSuccess?: (card: ElizaOSCharacterCard) => void;
+  onSuccess?: (card: ElizaOSCharacterCard, twitterProfile?: TwitterProfileData, scores?: ProfileScores) => void;
 }
 
 type ModalState = 'generating' | 'preview' | 'editing' | 'saving' | 'saved' | 'error';
@@ -63,12 +73,8 @@ export function CharacterCardModal({
     topics: false,
     examples: false,
   });
-  const [twitterProfile, setTwitterProfile] = useState<{
-    username: string;
-    name: string;
-    profile_image_url?: string;
-    followers_count?: number;
-  } | null>(null);
+  const [twitterProfile, setTwitterProfile] = useState<TwitterProfileData | null>(null);
+  const [profileScores, setProfileScores] = useState<ProfileScores | null>(null);
   const [analysisMetadata, setAnalysisMetadata] = useState<{
     tweets_analyzed: number;
     analysis_summary?: {
@@ -106,6 +112,7 @@ export function CharacterCardModal({
         setError(null);
         setStatusIndex(0);
         setTwitterProfile(null);
+        setProfileScores(null);
         setAnalysisMetadata(null);
       }, 300);
     }
@@ -132,6 +139,7 @@ export function CharacterCardModal({
       setCharacterCard(result.character_card);
       setEditedCard(result.character_card);
       setTwitterProfile(result.twitter_profile);
+      setProfileScores(result.profile_scores);
       setAnalysisMetadata({
         tweets_analyzed: result.analysis_metadata.tweets_analyzed,
         analysis_summary: result.analysis_metadata.analysis_summary,
@@ -153,11 +161,17 @@ export function CharacterCardModal({
         generatedBy: 'grok_api',
         generationMetadata: {
           twitter_username: twitterProfile?.username,
+          twitter_metrics: twitterProfile ? {
+            followers_count: twitterProfile.followers_count,
+            following_count: twitterProfile.following_count,
+            tweet_count: twitterProfile.tweet_count,
+          } : null,
+          profile_scores: profileScores,
           generated_at: new Date().toISOString(),
         },
       });
       setState('saved');
-      onSuccess?.(editedCard);
+      onSuccess?.(editedCard, twitterProfile || undefined, profileScores || undefined);
     } catch (err: any) {
       console.error('Save failed:', err);
       setError(err.message || 'Failed to save character card');
