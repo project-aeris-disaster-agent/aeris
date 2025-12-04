@@ -168,6 +168,9 @@ export function HomePage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Track modal mode
+  const [modalMode, setModalMode] = useState<'generate' | 'edit'>('generate');
+
   const handleGenerateClone = async () => {
     // Check if we have a Twitter access token
     if (!userProfile?.twitter_access_token) {
@@ -180,7 +183,8 @@ export function HomePage() {
           .maybeSingle();
         
         if (data && (data as any).twitter_access_token) {
-          // We have a token, open the modal
+          // We have a token, open the modal in generate mode
+          setModalMode('generate');
           setIsModalOpen(true);
           return;
         }
@@ -190,6 +194,16 @@ export function HomePage() {
       alert('Please connect your Twitter account first to generate your AI clone.\n\nGo to the Auth page and sign in with Twitter.');
       return;
     }
+    setModalMode('generate');
+    setIsModalOpen(true);
+  };
+
+  const handleEditClone = () => {
+    if (!characterCard) {
+      alert('No character card found. Please generate your AI clone first.');
+      return;
+    }
+    setModalMode('edit');
     setIsModalOpen(true);
   };
 
@@ -399,27 +413,31 @@ export function HomePage() {
               </div>
             </div>
 
-            {/* Generate AI Clone Button */}
-            <button
-              onClick={handleGenerateClone}
-              disabled={isLoadingProfile}
-              className="w-full bg-gradient-to-r from-pink-600 to-cyan-500 rounded-xl p-[2px] hover:scale-[1.02] transition-transform disabled:opacity-50 disabled:hover:scale-100"
-            >
-              <div className="bg-black/80 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center justify-center gap-2">
-                {hasAlterEgo ? (
-                  <>
-                    <Settings className="w-4 h-4 text-white" />
-                    <span className="text-white font-bold text-sm">Edit Alter Ego</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 text-white" />
-                    <span className="text-white font-bold text-sm">GENERATE AI CLONE</span>
-                    <Zap className="w-3 h-3 text-yellow-400" />
-                  </>
-                )}
-              </div>
-            </button>
+            {/* Generate/Edit AI Clone Button */}
+            {hasAlterEgo ? (
+              <button
+                onClick={handleEditClone}
+                disabled={isLoadingProfile}
+                className="w-full bg-gradient-to-r from-cyan-600 to-blue-500 rounded-xl p-[2px] hover:scale-[1.02] transition-transform disabled:opacity-50 disabled:hover:scale-100"
+              >
+                <div className="bg-black/80 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center justify-center gap-2">
+                  <Settings className="w-4 h-4 text-white" />
+                  <span className="text-white font-bold text-sm">Edit Alter Ego</span>
+                </div>
+              </button>
+            ) : (
+              <button
+                onClick={handleGenerateClone}
+                disabled={isLoadingProfile}
+                className="w-full bg-gradient-to-r from-pink-600 to-cyan-500 rounded-xl p-[2px] hover:scale-[1.02] transition-transform disabled:opacity-50 disabled:hover:scale-100"
+              >
+                <div className="bg-black/80 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center justify-center gap-2">
+                  <Sparkles className="w-4 h-4 text-white" />
+                  <span className="text-white font-bold text-sm">GENERATE AI CLONE</span>
+                  <Zap className="w-3 h-3 text-yellow-400" />
+                </div>
+              </button>
+            )}
           </div>
 
           {/* Center Panel - Chat Interface */}
@@ -590,13 +608,17 @@ export function HomePage() {
         </div>
       </footer>
 
-      {/* Character Card Generation Modal */}
+      {/* Character Card Generation/Edit Modal */}
       {user && (
         <CharacterCardModal
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           userId={user.id}
           twitterAccessToken={userProfile?.twitter_access_token || undefined}
+          mode={modalMode}
+          existingCard={characterCard || undefined}
+          existingScores={profileScores || undefined}
+          existingMetrics={twitterMetrics || undefined}
           onSuccess={handleCharacterCardSuccess}
         />
       )}

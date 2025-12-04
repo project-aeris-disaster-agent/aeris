@@ -16,6 +16,8 @@ import {
   ChevronDown,
   ChevronUp,
   AlertCircle,
+  DollarSign,
+  Lock,
 } from 'lucide-react';
 import type { ElizaOSCharacterCard, ProfileScores } from '@/types/database';
 import {
@@ -40,10 +42,18 @@ interface CharacterCardModalProps {
   onClose: () => void;
   userId: string;
   twitterAccessToken?: string;
+  // Mode: 'generate' for new clones, 'edit' for existing clones
+  mode?: 'generate' | 'edit';
+  // Existing card data for edit mode
+  existingCard?: ElizaOSCharacterCard;
+  existingScores?: ProfileScores;
+  existingMetrics?: { followers_count?: number; following_count?: number; tweet_count?: number };
   onSuccess?: (card: ElizaOSCharacterCard, twitterProfile?: TwitterProfileData, scores?: ProfileScores) => void;
 }
 
-type ModalState = 'generating' | 'preview' | 'editing' | 'saving' | 'saved' | 'error';
+type ModalState = 'generating' | 'preview' | 'editing' | 'saving' | 'saved' | 'error' | 'confirm_regenerate';
+
+const REGENERATE_FEE = 3; // $3 USDC
 
 const statusMessages = [
   { text: 'Connecting to Twitter API...', icon: '🐦' },
@@ -60,11 +70,14 @@ export function CharacterCardModal({
   onClose,
   userId,
   twitterAccessToken: propAccessToken,
+  mode = 'generate',
+  existingCard,
+  existingScores,
+  existingMetrics,
   onSuccess,
 }: CharacterCardModalProps) {
-  const [state, setState] = useState<ModalState>('generating');
-  const [characterCard, setCharacterCard] = useState<ElizaOSCharacterCard | null>(null);
-  const [editedCard, setEditedCard] = useState<ElizaOSCharacterCard | null>(null);
+  const [state, setState] = useState<ModalState>(mode === 'edit' ? 'editing' : 'generating');
+  const [editedCard, setEditedCard] = useState<ElizaOSCharacterCard | null>(existingCard || null);
   const [error, setError] = useState<string | null>(null);
   const [statusIndex, setStatusIndex] = useState(0);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -73,8 +86,17 @@ export function CharacterCardModal({
     topics: false,
     examples: false,
   });
-  const [twitterProfile, setTwitterProfile] = useState<TwitterProfileData | null>(null);
-  const [profileScores, setProfileScores] = useState<ProfileScores | null>(null);
+  const [twitterProfile, setTwitterProfile] = useState<TwitterProfileData | null>(
+    existingMetrics ? {
+      id: '',
+      username: '',
+      name: '',
+      followers_count: existingMetrics.followers_count,
+      following_count: existingMetrics.following_count,
+      tweet_count: existingMetrics.tweet_count,
+    } : null
+  );
+  const [profileScores, setProfileScores] = useState<ProfileScores | null>(existingScores || null);
   const [analysisMetadata, setAnalysisMetadata] = useState<{
     tweets_analyzed: number;
     analysis_summary?: {
@@ -95,28 +117,39 @@ export function CharacterCardModal({
     }
   }, [state]);
 
-  // Start generation when modal opens
+  // Initialize based on mode when modal opens
   useEffect(() => {
-    if (isOpen && state === 'generating') {
-      startGeneration();
+    if (isOpen) {
+      if (mode === 'edit' && existingCard) {
+        // Edit mode: load existing card directly
+        setEditedCard(existingCard);
+        setProfileScores(existingScores || null);
+        setState('editing');
+      } else if (mode === 'generate' && state === 'generating') {
+        // Generate mode: start generation
+        startGeneration();
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, mode]);
 
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
       setTimeout(() => {
-        setState('generating');
-        setCharacterCard(null);
-        setEditedCard(null);
+        setState(mode === 'edit' ? 'editing' : 'generating');
+        setEditedCard(existingCard || null);
         setError(null);
         setStatusIndex(0);
-        setTwitterProfile(null);
-        setProfileScores(null);
+        if (!existingMetrics) {
+          setTwitterProfile(null);
+        }
+        if (!existingScores) {
+          setProfileScores(null);
+        }
         setAnalysisMetadata(null);
       }, 300);
     }
-  }, [isOpen]);
+  }, [isOpen, mode, existingCard, existingScores, existingMetrics]);
 
   const startGeneration = async () => {
     setState('generating');
@@ -136,7 +169,6 @@ export function CharacterCardModal({
 
       const result = await generateCharacterCard(userId, accessToken);
 
-      setCharacterCard(result.character_card);
       setEditedCard(result.character_card);
       setTwitterProfile(result.twitter_profile);
       setProfileScores(result.profile_scores);
@@ -149,6 +181,33 @@ export function CharacterCardModal({
       console.error('Generation failed:', err);
       setError(err.message || 'Failed to generate character card');
       setState('error');
+    }
+  };
+
+  // Show regenerate confirmation (payment required)
+  const handleRegenerateClick = () => {
+    setState('confirm_regenerate');
+  };
+
+  // Process payment and regenerate (x402 integration placeholder)
+  const handleConfirmRegenerate = async () => {
+    // TODO: Integrate x402 protocol for $3 USDC payment
+    // For now, show alert and proceed with generation
+    const confirmed = window.confirm(
+      `Regenerating your AI clone costs $${REGENERATE_FEE} USDC.\n\n` +
+      `This will:\n` +
+      `• Fetch your latest tweets\n` +
+      `• Run fresh AI personality analysis\n` +
+      `• Generate a new character card\n\n` +
+      `x402 payment integration coming soon.\n` +
+      `Click OK to proceed (free during beta).`
+    );
+    
+    if (confirmed) {
+      await startGeneration();
+    } else {
+      // Return to editing state
+      setState('editing');
     }
   };
 
@@ -600,6 +659,50 @@ export function CharacterCardModal({
             )}
           </div>
 
+          {/* Regenerate Confirmation State */}
+          {state === 'confirm_regenerate' && (
+            <div className="flex flex-col items-center justify-center py-12 px-6">
+              <div className="w-20 h-20 rounded-full bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/50 flex items-center justify-center mb-6">
+                <DollarSign className="w-10 h-10 text-yellow-400" />
+              </div>
+              <h3 className="text-xl font-bold text-white mb-2">Regenerate Character Card</h3>
+              <p className="text-white/60 text-center max-w-md mb-4">
+                Regenerating your AI clone will fetch your latest tweets and create a fresh personality analysis.
+              </p>
+              
+              <div className="bg-white/5 rounded-xl p-4 mb-6 w-full max-w-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-white/70 text-sm">Regeneration Fee</span>
+                  <span className="text-yellow-400 font-bold">${REGENERATE_FEE} USDC</span>
+                </div>
+                <div className="flex items-center gap-2 text-white/40 text-xs">
+                  <Lock className="w-3 h-3" />
+                  <span>Secured via x402 protocol</span>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setState('editing')}
+                  className="px-6 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmRegenerate}
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-gradient-to-r from-yellow-500 to-orange-500 text-black font-bold transition-transform hover:scale-105"
+                >
+                  <Zap className="w-4 h-4" />
+                  Pay & Regenerate
+                </button>
+              </div>
+              
+              <p className="text-white/30 text-xs mt-4">
+                Free during beta • Payment coming soon
+              </p>
+            </div>
+          )}
+
           {/* Footer Actions */}
           {(state === 'preview' || state === 'editing') && (
             <div className="sticky bottom-0 flex items-center justify-between px-6 py-4 border-t border-white/10 bg-black/80 backdrop-blur-md">
@@ -612,11 +715,12 @@ export function CharacterCardModal({
                   Export
                 </button>
                 <button
-                  onClick={startGeneration}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 text-sm transition-colors"
+                  onClick={handleRegenerateClick}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-yellow-400 text-sm transition-colors"
                 >
                   <RefreshCw className="w-4 h-4" />
                   Regenerate
+                  <span className="text-[10px] opacity-70">${REGENERATE_FEE}</span>
                 </button>
               </div>
               <div className="flex gap-2">
@@ -640,20 +744,17 @@ export function CharacterCardModal({
                 ) : (
                   <>
                     <button
-                      onClick={() => {
-                        setEditedCard(characterCard);
-                        setState('preview');
-                      }}
+                      onClick={onClose}
                       className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
                     >
                       Cancel
                     </button>
                     <button
-                      onClick={() => setState('preview')}
+                      onClick={handleSave}
                       className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-pink-600 to-cyan-500 text-white font-medium transition-transform hover:scale-105"
                     >
-                      <Check className="w-4 h-4" />
-                      Done Editing
+                      <Save className="w-4 h-4" />
+                      Save Changes
                     </button>
                   </>
                 )}
