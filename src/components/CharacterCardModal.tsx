@@ -18,6 +18,8 @@ import {
   AlertCircle,
   DollarSign,
   Lock,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import type { ElizaOSCharacterCard, ProfileScores } from '@/types/database';
 import {
@@ -54,6 +56,85 @@ interface CharacterCardModalProps {
 type ModalState = 'generating' | 'preview' | 'editing' | 'saving' | 'saved' | 'error' | 'confirm_regenerate';
 
 const REGENERATE_FEE = 3; // $3 USDC
+
+// Suggested keywords for style traits
+const SUGGESTED_STYLE_TRAITS = {
+  all: ['Authentic', 'Witty', 'Thoughtful', 'Bold', 'Curious', 'Empathetic', 'Analytical', 'Creative', 'Direct', 'Playful', 'Professional', 'Casual'],
+  chat: ['Friendly', 'Helpful', 'Conversational', 'Engaging', 'Supportive', 'Inquisitive', 'Warm', 'Patient', 'Enthusiastic', 'Respectful'],
+  post: ['Concise', 'Informative', 'Provocative', 'Inspiring', 'Educational', 'Entertaining', 'Opinionated', 'Relatable', 'Shareable', 'Viral'],
+};
+
+// Suggested topics
+const SUGGESTED_TOPICS = [
+  'Technology', 'AI & ML', 'Web3', 'Crypto', 'DeFi', 'NFTs', 'Gaming', 'Startups', 
+  'Programming', 'Design', 'Marketing', 'Finance', 'Health', 'Fitness', 'Travel',
+  'Music', 'Art', 'Philosophy', 'Science', 'Politics', 'Sports', 'Food', 'Fashion',
+];
+
+// Suggested adjectives
+const SUGGESTED_ADJECTIVES = [
+  'Innovative', 'Passionate', 'Strategic', 'Insightful', 'Charismatic', 'Visionary',
+  'Grounded', 'Ambitious', 'Humble', 'Fearless', 'Resilient', 'Authentic',
+];
+
+// Editable Tag Component
+interface EditableTagProps {
+  value: string;
+  onRemove: () => void;
+  color?: 'pink' | 'green' | 'purple' | 'cyan' | 'yellow';
+  isEditing: boolean;
+}
+
+function EditableTag({ value, onRemove, color = 'pink', isEditing }: EditableTagProps) {
+  const colorClasses = {
+    pink: 'bg-gradient-to-r from-pink-600/20 to-pink-500/20 border-pink-500/30 text-pink-300',
+    green: 'bg-green-500/20 border-green-500/30 text-green-300',
+    purple: 'bg-purple-500/20 border-purple-500/30 text-purple-300',
+    cyan: 'bg-cyan-500/20 border-cyan-500/30 text-cyan-300',
+    yellow: 'bg-yellow-500/20 border-yellow-500/30 text-yellow-300',
+  };
+
+  return (
+    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs ${colorClasses[color]}`}>
+      {value}
+      {isEditing && (
+        <button
+          onClick={onRemove}
+          className="ml-0.5 p-0.5 rounded-full hover:bg-white/20 transition-colors"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+// Suggestion Bubble Component
+interface SuggestionBubbleProps {
+  value: string;
+  onAdd: () => void;
+  color?: 'pink' | 'green' | 'purple' | 'cyan' | 'yellow';
+}
+
+function SuggestionBubble({ value, onAdd, color = 'pink' }: SuggestionBubbleProps) {
+  const colorClasses = {
+    pink: 'border-pink-500/20 text-pink-400/60 hover:border-pink-500/50 hover:text-pink-300 hover:bg-pink-500/10',
+    green: 'border-green-500/20 text-green-400/60 hover:border-green-500/50 hover:text-green-300 hover:bg-green-500/10',
+    purple: 'border-purple-500/20 text-purple-400/60 hover:border-purple-500/50 hover:text-purple-300 hover:bg-purple-500/10',
+    cyan: 'border-cyan-500/20 text-cyan-400/60 hover:border-cyan-500/50 hover:text-cyan-300 hover:bg-cyan-500/10',
+    yellow: 'border-yellow-500/20 text-yellow-400/60 hover:border-yellow-500/50 hover:text-yellow-300 hover:bg-yellow-500/10',
+  };
+
+  return (
+    <button
+      onClick={onAdd}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-dashed text-xs transition-all ${colorClasses[color]}`}
+    >
+      <Plus className="w-2.5 h-2.5" />
+      {value}
+    </button>
+  );
+}
 
 const statusMessages = [
   { text: 'Connecting to Twitter API...', icon: '🐦' },
@@ -106,6 +187,10 @@ export function CharacterCardModal({
       humor_style: string;
     };
   } | null>(null);
+  
+  // Input states for adding new items
+  const [newTopicInput, setNewTopicInput] = useState('');
+  const [newAdjectiveInput, setNewAdjectiveInput] = useState('');
 
   // Progress animation during generation
   useEffect(() => {
@@ -147,6 +232,8 @@ export function CharacterCardModal({
           setProfileScores(null);
         }
         setAnalysisMetadata(null);
+        setNewTopicInput('');
+        setNewAdjectiveInput('');
       }, 300);
     }
   }, [isOpen, mode, existingCard, existingScores, existingMetrics]);
@@ -251,6 +338,61 @@ export function CharacterCardModal({
   const updateCardField = (field: string, value: any) => {
     if (!editedCard) return;
     setEditedCard({ ...editedCard, [field]: value });
+  };
+
+  // Helper functions for array manipulation
+  const addToArray = (field: string, value: string) => {
+    if (!editedCard || !value.trim()) return;
+    const currentArray = (editedCard as any)[field] || [];
+    if (!currentArray.includes(value.trim())) {
+      updateCardField(field, [...currentArray, value.trim()]);
+    }
+  };
+
+  const removeFromArray = (field: string, index: number) => {
+    if (!editedCard) return;
+    const currentArray = (editedCard as any)[field] || [];
+    updateCardField(field, currentArray.filter((_: any, i: number) => i !== index));
+  };
+
+  const addStyleTrait = (category: 'all' | 'chat' | 'post', value: string) => {
+    if (!editedCard || !value.trim()) return;
+    const currentTraits = editedCard.style[category] || [];
+    if (!currentTraits.includes(value.trim())) {
+      updateCardField('style', {
+        ...editedCard.style,
+        [category]: [...currentTraits, value.trim()],
+      });
+    }
+  };
+
+  const removeStyleTrait = (category: 'all' | 'chat' | 'post', index: number) => {
+    if (!editedCard) return;
+    const currentTraits = editedCard.style[category] || [];
+    updateCardField('style', {
+      ...editedCard.style,
+      [category]: currentTraits.filter((_, i) => i !== index),
+    });
+  };
+
+  const addBioEntry = () => {
+    if (!editedCard) return;
+    updateCardField('bio', [...editedCard.bio, '']);
+  };
+
+  const removeBioEntry = (index: number) => {
+    if (!editedCard || editedCard.bio.length <= 1) return;
+    updateCardField('bio', editedCard.bio.filter((_, i) => i !== index));
+  };
+
+  const addPostExample = () => {
+    if (!editedCard) return;
+    updateCardField('postExamples', [...editedCard.postExamples, '']);
+  };
+
+  const removePostExample = (index: number) => {
+    if (!editedCard || editedCard.postExamples.length <= 1) return;
+    updateCardField('postExamples', editedCard.postExamples.filter((_, i) => i !== index));
   };
 
   // Note: updateStyleField is available for future use when style editing is implemented
@@ -476,19 +618,38 @@ export function CharacterCardModal({
                   {expandedSections.bio && (
                     <div className="px-4 pb-4 space-y-2">
                       {state === 'editing' ? (
-                        editedCard.bio.map((bio, idx) => (
-                          <textarea
-                            key={idx}
-                            value={bio}
-                            onChange={(e) => {
-                              const newBio = [...editedCard.bio];
-                              newBio[idx] = e.target.value;
-                              updateCardField('bio', newBio);
-                            }}
-                            className="w-full bg-white/5 border border-white/20 rounded-lg px-3 py-2 text-white/80 text-sm focus:outline-none focus:border-cyan-400/50 resize-none"
-                            rows={2}
-                          />
-                        ))
+                        <>
+                          {editedCard.bio.map((bio, idx) => (
+                            <div key={idx} className="relative group">
+                              <textarea
+                                value={bio}
+                                onChange={(e) => {
+                                  const newBio = [...editedCard.bio];
+                                  newBio[idx] = e.target.value;
+                                  updateCardField('bio', newBio);
+                                }}
+                                placeholder="Describe a personality trait or background..."
+                                className="w-full bg-white/5 border border-white/20 rounded-lg px-3 py-2 pr-10 text-white/80 text-sm focus:outline-none focus:border-pink-400/50 resize-none"
+                                rows={2}
+                              />
+                              {editedCard.bio.length > 1 && (
+                                <button
+                                  onClick={() => removeBioEntry(idx)}
+                                  className="absolute top-2 right-2 p-1 rounded-lg bg-red-500/20 text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/40 transition-all"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          <button
+                            onClick={addBioEntry}
+                            className="w-full flex items-center justify-center gap-2 p-2 border border-dashed border-pink-500/30 rounded-lg text-pink-400/70 text-sm hover:bg-pink-500/10 hover:border-pink-500/50 transition-all"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Add Bio Entry
+                          </button>
+                        </>
                       ) : (
                         editedCard.bio.map((bio, idx) => (
                           <p key={idx} className="text-white/70 text-sm">
@@ -517,22 +678,54 @@ export function CharacterCardModal({
                     )}
                   </button>
                   {expandedSections.style && (
-                    <div className="px-4 pb-4 space-y-3">
-                      {(['all', 'chat', 'post'] as const).map((category) => (
-                        <div key={category}>
-                          <p className="text-white/50 text-xs uppercase mb-1">{category} style</p>
-                          <div className="flex flex-wrap gap-1">
-                            {editedCard.style[category].map((trait, idx) => (
-                              <span
-                                key={idx}
-                                className="px-2 py-1 rounded-full bg-gradient-to-r from-pink-600/20 to-cyan-500/20 border border-white/10 text-white/80 text-xs"
-                              >
-                                {trait}
-                              </span>
-                            ))}
+                    <div className="px-4 pb-4 space-y-4">
+                      {(['all', 'chat', 'post'] as const).map((category) => {
+                        const categoryColors = { all: 'yellow', chat: 'cyan', post: 'purple' } as const;
+                        const color = categoryColors[category];
+                        const currentTraits = editedCard.style[category] || [];
+                        const availableSuggestions = SUGGESTED_STYLE_TRAITS[category].filter(
+                          trait => !currentTraits.includes(trait)
+                        );
+
+                        return (
+                          <div key={category} className="space-y-2">
+                            <p className="text-white/50 text-xs uppercase flex items-center gap-2">
+                              {category === 'all' ? 'General' : category} style
+                              <span className="text-white/30">({currentTraits.length})</span>
+                            </p>
+                            
+                            {/* Current traits */}
+                            <div className="flex flex-wrap gap-1.5">
+                              {currentTraits.map((trait, idx) => (
+                                <EditableTag
+                                  key={idx}
+                                  value={trait}
+                                  onRemove={() => removeStyleTrait(category, idx)}
+                                  color={color}
+                                  isEditing={state === 'editing'}
+                                />
+                              ))}
+                            </div>
+
+                            {/* Suggestions (only in edit mode) */}
+                            {state === 'editing' && availableSuggestions.length > 0 && (
+                              <div className="pt-2 border-t border-white/5">
+                                <p className="text-white/30 text-[10px] uppercase mb-1.5">Suggestions</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {availableSuggestions.slice(0, 6).map((suggestion) => (
+                                    <SuggestionBubble
+                                      key={suggestion}
+                                      value={suggestion}
+                                      onAdd={() => addStyleTrait(category, suggestion)}
+                                      color={color}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -555,32 +748,134 @@ export function CharacterCardModal({
                     )}
                   </button>
                   {expandedSections.topics && (
-                    <div className="px-4 pb-4">
-                      <div className="flex flex-wrap gap-2">
-                        {editedCard.topics.map((topic, idx) => (
-                          <span
-                            key={idx}
-                            className="px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30 text-green-300 text-sm"
-                          >
-                            {topic}
-                          </span>
-                        ))}
-                      </div>
-                      {editedCard.adjectives && editedCard.adjectives.length > 0 && (
-                        <div className="mt-3 pt-3 border-t border-white/10">
-                          <p className="text-white/50 text-xs uppercase mb-2">Adjectives</p>
-                          <div className="flex flex-wrap gap-1">
-                            {editedCard.adjectives.map((adj, idx) => (
-                              <span
-                                key={idx}
-                                className="px-2 py-0.5 rounded bg-white/5 text-white/60 text-xs"
-                              >
-                                {adj}
-                              </span>
-                            ))}
-                          </div>
+                    <div className="px-4 pb-4 space-y-4">
+                      {/* Topics */}
+                      <div className="space-y-2">
+                        <p className="text-white/50 text-xs uppercase">Topics</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {editedCard.topics.map((topic, idx) => (
+                            <EditableTag
+                              key={idx}
+                              value={topic}
+                              onRemove={() => removeFromArray('topics', idx)}
+                              color="green"
+                              isEditing={state === 'editing'}
+                            />
+                          ))}
                         </div>
-                      )}
+
+                        {/* Add new topic input */}
+                        {state === 'editing' && (
+                          <>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={newTopicInput}
+                                onChange={(e) => setNewTopicInput(e.target.value)}
+                                onKeyPress={(e) => {
+                                  if (e.key === 'Enter') {
+                                    addToArray('topics', newTopicInput);
+                                    setNewTopicInput('');
+                                  }
+                                }}
+                                placeholder="Add a topic..."
+                                className="flex-1 bg-white/5 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-green-400/50 placeholder:text-white/30"
+                              />
+                              <button
+                                onClick={() => {
+                                  addToArray('topics', newTopicInput);
+                                  setNewTopicInput('');
+                                }}
+                                disabled={!newTopicInput.trim()}
+                                className="px-3 py-1.5 rounded-lg bg-green-500/20 text-green-400 text-sm hover:bg-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            {/* Topic suggestions */}
+                            {SUGGESTED_TOPICS.filter(t => !editedCard.topics.includes(t)).length > 0 && (
+                              <div className="pt-2 border-t border-white/5">
+                                <p className="text-white/30 text-[10px] uppercase mb-1.5">Suggestions</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {SUGGESTED_TOPICS.filter(t => !editedCard.topics.includes(t)).slice(0, 8).map((suggestion) => (
+                                    <SuggestionBubble
+                                      key={suggestion}
+                                      value={suggestion}
+                                      onAdd={() => addToArray('topics', suggestion)}
+                                      color="green"
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Adjectives */}
+                      <div className="pt-3 border-t border-white/10 space-y-2">
+                        <p className="text-white/50 text-xs uppercase">Adjectives</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(editedCard.adjectives || []).map((adj, idx) => (
+                            <EditableTag
+                              key={idx}
+                              value={adj}
+                              onRemove={() => removeFromArray('adjectives', idx)}
+                              color="cyan"
+                              isEditing={state === 'editing'}
+                            />
+                          ))}
+                        </div>
+
+                        {/* Add new adjective input */}
+                        {state === 'editing' && (
+                          <>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={newAdjectiveInput}
+                                onChange={(e) => setNewAdjectiveInput(e.target.value)}
+                                onKeyPress={(e) => {
+                                  if (e.key === 'Enter') {
+                                    addToArray('adjectives', newAdjectiveInput);
+                                    setNewAdjectiveInput('');
+                                  }
+                                }}
+                                placeholder="Add an adjective..."
+                                className="flex-1 bg-white/5 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-cyan-400/50 placeholder:text-white/30"
+                              />
+                              <button
+                                onClick={() => {
+                                  addToArray('adjectives', newAdjectiveInput);
+                                  setNewAdjectiveInput('');
+                                }}
+                                disabled={!newAdjectiveInput.trim()}
+                                className="px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-400 text-sm hover:bg-cyan-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            {/* Adjective suggestions */}
+                            {SUGGESTED_ADJECTIVES.filter(a => !(editedCard.adjectives || []).includes(a)).length > 0 && (
+                              <div className="pt-2 border-t border-white/5">
+                                <p className="text-white/30 text-[10px] uppercase mb-1.5">Suggestions</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {SUGGESTED_ADJECTIVES.filter(a => !(editedCard.adjectives || []).includes(a)).slice(0, 6).map((suggestion) => (
+                                    <SuggestionBubble
+                                      key={suggestion}
+                                      value={suggestion}
+                                      onAdd={() => addToArray('adjectives', suggestion)}
+                                      color="cyan"
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -604,14 +899,55 @@ export function CharacterCardModal({
                   </button>
                   {expandedSections.examples && (
                     <div className="px-4 pb-4 space-y-2">
-                      {editedCard.postExamples.slice(0, 5).map((example, idx) => (
-                        <div
-                          key={idx}
-                          className="p-3 rounded-lg bg-white/5 border border-white/10 text-white/70 text-sm"
-                        >
-                          "{example}"
-                        </div>
-                      ))}
+                      <p className="text-white/40 text-xs mb-2">
+                        These examples help your AI clone learn your posting style
+                      </p>
+                      {state === 'editing' ? (
+                        <>
+                          {editedCard.postExamples.map((example, idx) => (
+                            <div key={idx} className="relative group">
+                              <textarea
+                                value={example}
+                                onChange={(e) => {
+                                  const newExamples = [...editedCard.postExamples];
+                                  newExamples[idx] = e.target.value;
+                                  updateCardField('postExamples', newExamples);
+                                }}
+                                placeholder="Write an example post in your style..."
+                                className="w-full bg-white/5 border border-white/20 rounded-lg px-3 py-2 pr-10 text-white/80 text-sm focus:outline-none focus:border-purple-400/50 resize-none"
+                                rows={2}
+                              />
+                              {editedCard.postExamples.length > 1 && (
+                                <button
+                                  onClick={() => removePostExample(idx)}
+                                  className="absolute top-2 right-2 p-1 rounded-lg bg-red-500/20 text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/40 transition-all"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <div className="absolute bottom-2 right-2 text-white/20 text-[10px]">
+                                {example.length}/280
+                              </div>
+                            </div>
+                          ))}
+                          <button
+                            onClick={addPostExample}
+                            className="w-full flex items-center justify-center gap-2 p-2 border border-dashed border-purple-500/30 rounded-lg text-purple-400/70 text-sm hover:bg-purple-500/10 hover:border-purple-500/50 transition-all"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Add Post Example
+                          </button>
+                        </>
+                      ) : (
+                        editedCard.postExamples.slice(0, 5).map((example, idx) => (
+                          <div
+                            key={idx}
+                            className="p-3 rounded-lg bg-white/5 border border-white/10 text-white/70 text-sm"
+                          >
+                            "{example}"
+                          </div>
+                        ))
+                      )}
                     </div>
                   )}
                 </div>
