@@ -4,7 +4,6 @@ import {
   Zap, 
   ChevronDown, 
   Twitter, 
-  Send,
   RefreshCw,
   X,
   CheckCircle2,

@@ -104,7 +104,9 @@ export async function schedulePost(
     content,
     post_type: postType,
     scheduled_for: scheduledFor.toISOString(),
+    posted_at: null,
     status: 'pending',
+    error_message: null,
     post_metadata: {
       platform,
       generated_by: 'ai',
