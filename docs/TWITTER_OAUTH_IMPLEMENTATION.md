@@ -120,9 +120,8 @@ router.post('/auth/twitter/callback', async (req, res) => {
 
     const userData = await userResponse.json();
 
-    // TODO: Create/update user in database
-    // TODO: Store tokens securely (encrypted)
-    // TODO: Create session/JWT token
+    // User creation and token storage is now handled by Supabase Edge Function
+    // See: supabase/functions/twitter-oauth-callback/index.ts
 
     res.json({
       accessToken: tokens.access_token,

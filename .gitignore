@@ -34,3 +34,7 @@ dist-ssr
 build
 out
 
+.vercel
+.env*.local
+.env.local
+.env.vercel

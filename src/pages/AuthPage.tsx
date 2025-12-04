@@ -4,12 +4,12 @@ import { DitheringShader } from '@/components/ui/dithering-shader';
 export function AuthPage() {
   const handleAuthSuccess = (userData: { email: string; name?: string }) => {
     console.log('Authentication successful:', userData);
-    // TODO: Handle successful authentication
-    // Redirect to dashboard or next step
+    // Authentication redirect is handled by NewAuthCard component
   };
 
   return (
     <div className="relative flex h-screen w-full items-center justify-center overflow-hidden">
+      {/* Background Shader - Full screen fixed */}
       <DitheringShader 
         shape="wave"
         type="8x8"
@@ -17,8 +17,14 @@ export function AuthPage() {
         colorFront="#ff0088"
         pxSize={3}
         speed={0.6}
-        className="fixed inset-0 -z-10"
-        style={{ width: '100vw', height: '100vh' }}
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          zIndex: 0,
+        }}
       />
       
       {/* Floating Auth Form Container */}

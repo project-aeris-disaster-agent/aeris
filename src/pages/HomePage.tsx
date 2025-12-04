@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DitheringShader } from '@/components/ui/dithering-shader';
@@ -6,6 +6,11 @@ import { CharacterCardModal } from '@/components/CharacterCardModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { getCharacterCard } from '@/services/characterCardService';
+import { 
+  sendMessage as sendChatMessage, 
+  getOrCreateSession, 
+  getSessionMessages
+} from '@/services/chatService';
 import type { ElizaOSCharacterCard, ProfileScores, LetterGrade } from '@/types/database';
 import { 
   Send, 
@@ -25,7 +30,7 @@ import {
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: Date;
 }
@@ -81,14 +86,17 @@ const BaseIcon = ({ className }: { className?: string }) => (
 export function HomePage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: "Hello! I'm your AI Alter Ego. I can help you manage your social presence, draft posts, and engage with your community. What would you like to do today?",
-      timestamp: new Date(),
-    }
-  ]);
+  // Initial welcome message - will be updated when character card loads
+  const getWelcomeMessage = useCallback((card?: ElizaOSCharacterCard | null): Message => ({
+    id: 'welcome',
+    role: 'assistant',
+    content: card 
+      ? `Hey! I'm ${card.name}, your AI Alter Ego. ${card.bio[0] || "Ready to chat whenever you are."} What's on your mind?`
+      : "Hello! I'm ready to become your AI Alter Ego. Generate your clone first so I can learn your personality and start chatting in your unique voice!",
+    timestamp: new Date(),
+  }), []);
+
+  const [messages, setMessages] = useState<Message[]>([getWelcomeMessage()]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [hasAlterEgo, setHasAlterEgo] = useState(false);
@@ -103,6 +111,8 @@ export function HomePage() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [twitterMetrics, setTwitterMetrics] = useState<TwitterMetricsState | null>(null);
   const [profileScores, setProfileScores] = useState<ProfileScores | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Fetch user profile and character card status
@@ -163,6 +173,36 @@ export function HomePage() {
 
     fetchUserData();
   }, [user?.id]);
+
+  // Initialize chat session when user has a character card
+  useEffect(() => {
+    async function initChatSession() {
+      if (!user?.id || !hasAlterEgo || sessionId) return;
+      
+      setIsLoadingSession(true);
+      try {
+        const newSessionId = await getOrCreateSession(user.id);
+        setSessionId(newSessionId);
+        
+        // Load existing messages from this session
+        const existingMessages = await getSessionMessages(newSessionId, 20);
+        if (existingMessages.length > 0) {
+          setMessages(existingMessages.map(m => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            timestamp: m.timestamp,
+          })));
+        }
+      } catch (err) {
+        console.error('Failed to initialize chat session:', err);
+      } finally {
+        setIsLoadingSession(false);
+      }
+    }
+    
+    initChatSession();
+  }, [user?.id, hasAlterEgo, sessionId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -227,13 +267,11 @@ export function HomePage() {
       setProfileScores(scores);
     }
     
+    // Reset session to start fresh with new personality
+    setSessionId(null);
+    
     // Update the initial message to reflect the character's personality
-    setMessages([{
-      id: '1',
-      role: 'assistant',
-      content: `Hello! I'm ${card.name}, your AI Alter Ego. ${card.bio[0] || "I can help you manage your social presence, draft posts, and engage with your community."} What would you like to do today?`,
-      timestamp: new Date(),
-    }]);
+    setMessages([getWelcomeMessage(card)]);
   };
 
   // Format number for display (e.g., 12400 -> "12.4K")
@@ -243,8 +281,45 @@ export function HomePage() {
     return num.toString();
   };
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = useCallback(async () => {
     if (!inputValue.trim()) return;
+    if (!user?.id) return;
+    
+    // If no character card, show placeholder response
+    if (!characterCard) {
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: inputValue,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, userMessage]);
+      setInputValue('');
+      setIsTyping(true);
+      
+      setTimeout(() => {
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: "I'd love to chat with you! But first, you need to generate your AI clone so I can learn your personality. Click 'Generate AI Clone' to get started! 🚀",
+          timestamp: new Date(),
+        }]);
+        setIsTyping(false);
+      }, 1000);
+      return;
+    }
+
+    // Ensure we have a session
+    let currentSessionId = sessionId;
+    if (!currentSessionId) {
+      try {
+        currentSessionId = await getOrCreateSession(user.id);
+        setSessionId(currentSessionId);
+      } catch (err) {
+        console.error('Failed to create session:', err);
+        return;
+      }
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -254,27 +329,54 @@ export function HomePage() {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const messageText = inputValue;
     setInputValue('');
     setIsTyping(true);
 
-    setTimeout(() => {
-      const aiMessage: Message = {
+    try {
+      // Send message to AI clone via Edge Function
+      const response = await sendChatMessage(
+        user.id,
+        currentSessionId,
+        messageText,
+        characterCard
+      );
+
+      if (response.success) {
+        setMessages(prev => [...prev, {
+          id: response.message.id,
+          role: 'assistant',
+          content: response.message.content,
+          timestamp: response.message.timestamp,
+        }]);
+      } else {
+        // Show error response
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: response.error || "Sorry, I'm having trouble responding right now. Please try again.",
+          timestamp: new Date(),
+        }]);
+      }
+    } catch (err) {
+      console.error('Chat error:', err);
+      setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: "I understand your request. As your AI Alter Ego, I'm here to help you craft the perfect response. This is a placeholder - full AI integration coming soon!",
+        content: "Oops! Something went wrong. Let me try that again in a moment.",
         timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, aiMessage]);
+      }]);
+    } finally {
       setIsTyping(false);
-    }, 1500);
-  };
+    }
+  }, [inputValue, user?.id, characterCard, sessionId]);
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
     }
-  };
+  }, [handleSendMessage]);
 
   return (
     <div className="relative min-h-screen w-full overflow-x-hidden">
@@ -448,18 +550,30 @@ export function HomePage() {
                 <div className="flex items-center gap-3">
                   <div className="relative">
                     <Bot className="w-5 h-5 text-cyan-400" />
-                    <div className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${hasAlterEgo ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                    <div className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${
+                      isTyping ? 'bg-yellow-400 animate-pulse' : 
+                      hasAlterEgo ? 'bg-green-400' : 'bg-gray-400'
+                    }`} />
                   </div>
                   <div>
                     <h3 className="text-white font-semibold text-sm">
                       {characterCard?.name || 'AI Alter Ego'}
                     </h3>
                     <p className="text-white/40 text-xs">
-                      {hasAlterEgo ? 'Online • Ready to assist' : 'Generate your clone to start'}
+                      {isTyping ? 'Typing...' :
+                       isLoadingSession ? 'Loading session...' :
+                       hasAlterEgo ? 'Online • Ready to chat' : 'Generate your clone to start'}
                     </p>
                   </div>
                 </div>
-                <MessageSquare className="w-4 h-4 text-white/40" />
+                <div className="flex items-center gap-2">
+                  {sessionId && (
+                    <span className="text-[10px] text-white/20 font-mono">
+                      {sessionId.slice(-6)}
+                    </span>
+                  )}
+                  <MessageSquare className="w-4 h-4 text-white/40" />
+                </div>
               </div>
               
               {/* Messages Area */}

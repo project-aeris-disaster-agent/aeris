@@ -135,6 +135,8 @@ let twitterOAuthInstance: TwitterOAuthService | null = null;
 export function getTwitterOAuthService(): TwitterOAuthService {
   if (!twitterOAuthInstance) {
     const clientId = import.meta.env.VITE_TWITTER_CLIENT_ID;
+    // Always use the environment variable if set, otherwise fall back to current origin
+    // This ensures the redirect URI matches what's configured in Twitter Developer Portal
     const redirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI || `${window.location.origin}/auth/twitter/callback`;
     const scopes = import.meta.env.VITE_TWITTER_SCOPES?.split(',') || ['tweet.read', 'users.read', 'offline.access'];
 
@@ -142,15 +144,14 @@ export function getTwitterOAuthService(): TwitterOAuthService {
       throw new Error('VITE_TWITTER_CLIENT_ID is not set in environment variables');
     }
 
-    // Debug logging (remove in production)
-    if (import.meta.env.DEV) {
-      console.log('🔐 Twitter OAuth Config:', {
-        clientId: clientId.substring(0, 10) + '...',
-        redirectUri,
-        scopes,
-        currentOrigin: window.location.origin,
-      });
-    }
+    // Always log in production to help debug OAuth issues
+    console.log('🔐 Twitter OAuth Config:', {
+      clientId: clientId.substring(0, 10) + '...',
+      redirectUri,
+      scopes,
+      currentOrigin: window.location.origin,
+      hasEnvRedirectUri: !!import.meta.env.VITE_TWITTER_REDIRECT_URI,
+    });
 
     twitterOAuthInstance = new TwitterOAuthService({
       clientId,
