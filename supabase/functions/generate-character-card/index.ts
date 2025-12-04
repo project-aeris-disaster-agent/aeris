@@ -662,7 +662,7 @@ async function callGrokAPI<T>(
   console.log('Calling Grok API...');
   
   const requestBody = {
-    model: 'grok-3-latest',
+    model: 'grok-beta',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt }
@@ -690,15 +690,28 @@ async function callGrokAPI<T>(
     });
 
     if (response.ok) {
-      const data = await response.json();
-      const content = data.choices[0]?.message?.content;
+      let data;
+      let responseText: string;
+      try {
+        responseText = await response.text();
+        console.log('Grok API raw response (first 1000 chars):', responseText.substring(0, 1000));
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Failed to parse Grok API response as JSON. Response:', responseText?.substring(0, 500) || 'Could not read response');
+        throw new Error('Grok API returned invalid JSON response');
+      }
+      
+      const content = data.choices?.[0]?.message?.content;
       
       if (!content) {
-        throw new Error('Empty response from Grok API');
+        console.error('Grok API response structure:', JSON.stringify(data).substring(0, 500));
+        throw new Error('Empty response from Grok API - no content in choices[0].message.content');
       }
 
       // Parse JSON, handling markdown code blocks
       let jsonContent = content.trim();
+      
+      // Remove markdown code block markers
       if (jsonContent.startsWith('```json')) {
         jsonContent = jsonContent.slice(7);
       } else if (jsonContent.startsWith('```')) {
@@ -708,11 +721,20 @@ async function callGrokAPI<T>(
         jsonContent = jsonContent.slice(0, -3);
       }
       
+      // Remove any leading/trailing whitespace
+      jsonContent = jsonContent.trim();
+      
+      // Log the content we're trying to parse (first 500 chars)
+      console.log('Attempting to parse JSON content (first 500 chars):', jsonContent.substring(0, 500));
+      
       try {
-        return JSON.parse(jsonContent.trim());
+        const parsed = JSON.parse(jsonContent);
+        console.log('Successfully parsed Grok response');
+        return parsed;
       } catch (e) {
-        console.error('Failed to parse Grok response:', content.substring(0, 500));
-        throw new Error('Failed to parse Grok API response as JSON');
+        console.error('JSON parse error:', e);
+        console.error('Full content that failed to parse (first 1000 chars):', jsonContent.substring(0, 1000));
+        throw new Error(`Failed to parse Grok API response as JSON: ${e instanceof Error ? e.message : 'Unknown error'}`);
       }
     }
 
