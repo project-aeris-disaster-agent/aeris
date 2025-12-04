@@ -191,6 +191,8 @@ export function CharacterCardModal({
   // Input states for adding new items
   const [newTopicInput, setNewTopicInput] = useState('');
   const [newAdjectiveInput, setNewAdjectiveInput] = useState('');
+  const [newStyleInputs, setNewStyleInputs] = useState({ all: '', chat: '', post: '' });
+  const [newPostExampleInput, setNewPostExampleInput] = useState('');
 
   // Progress animation during generation
   useEffect(() => {
@@ -234,6 +236,8 @@ export function CharacterCardModal({
         setAnalysisMetadata(null);
         setNewTopicInput('');
         setNewAdjectiveInput('');
+        setNewStyleInputs({ all: '', chat: '', post: '' });
+        setNewPostExampleInput('');
       }, 300);
     }
   }, [isOpen, mode, existingCard, existingScores, existingMetrics]);
@@ -383,11 +387,6 @@ export function CharacterCardModal({
   const removeBioEntry = (index: number) => {
     if (!editedCard || editedCard.bio.length <= 1) return;
     updateCardField('bio', editedCard.bio.filter((_, i) => i !== index));
-  };
-
-  const addPostExample = () => {
-    if (!editedCard) return;
-    updateCardField('postExamples', [...editedCard.postExamples, '']);
   };
 
   const removePostExample = (index: number) => {
@@ -707,21 +706,55 @@ export function CharacterCardModal({
                               ))}
                             </div>
 
-                            {/* Suggestions (only in edit mode) */}
-                            {state === 'editing' && availableSuggestions.length > 0 && (
-                              <div className="pt-2 border-t border-white/5">
-                                <p className="text-white/30 text-[10px] uppercase mb-1.5">Suggestions</p>
-                                <div className="flex flex-wrap gap-1">
-                                  {availableSuggestions.slice(0, 6).map((suggestion) => (
-                                    <SuggestionBubble
-                                      key={suggestion}
-                                      value={suggestion}
-                                      onAdd={() => addStyleTrait(category, suggestion)}
-                                      color={color}
-                                    />
-                                  ))}
+                            {/* Add custom trait + Suggestions (only in edit mode) */}
+                            {state === 'editing' && (
+                              <>
+                                {/* Custom input */}
+                                <div className="flex gap-2 mt-2">
+                                  <input
+                                    type="text"
+                                    value={newStyleInputs[category]}
+                                    onChange={(e) => setNewStyleInputs(prev => ({ ...prev, [category]: e.target.value }))}
+                                    onKeyPress={(e) => {
+                                      if (e.key === 'Enter' && newStyleInputs[category].trim()) {
+                                        addStyleTrait(category, newStyleInputs[category]);
+                                        setNewStyleInputs(prev => ({ ...prev, [category]: '' }));
+                                      }
+                                    }}
+                                    placeholder={`Add ${category} trait...`}
+                                    className="flex-1 bg-white/5 border border-white/20 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-yellow-400/50 placeholder:text-white/30"
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      if (newStyleInputs[category].trim()) {
+                                        addStyleTrait(category, newStyleInputs[category]);
+                                        setNewStyleInputs(prev => ({ ...prev, [category]: '' }));
+                                      }
+                                    }}
+                                    disabled={!newStyleInputs[category].trim()}
+                                    className={`px-2.5 py-1.5 rounded-lg bg-${color === 'yellow' ? 'yellow' : color}-500/20 text-${color === 'yellow' ? 'yellow' : color}-400 text-sm hover:bg-${color === 'yellow' ? 'yellow' : color}-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors`}
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
-                              </div>
+
+                                {/* Suggestions */}
+                                {availableSuggestions.length > 0 && (
+                                  <div className="pt-2 border-t border-white/5">
+                                    <p className="text-white/30 text-[10px] uppercase mb-1.5">Suggestions</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {availableSuggestions.slice(0, 6).map((suggestion) => (
+                                        <SuggestionBubble
+                                          key={suggestion}
+                                          value={suggestion}
+                                          onAdd={() => addStyleTrait(category, suggestion)}
+                                          color={color}
+                                        />
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </>
                             )}
                           </div>
                         );
@@ -902,51 +935,55 @@ export function CharacterCardModal({
                       <p className="text-white/40 text-xs mb-2">
                         These examples help your AI clone learn your posting style
                       </p>
-                      {state === 'editing' ? (
-                        <>
-                          {editedCard.postExamples.map((example, idx) => (
-                            <div key={idx} className="relative group">
-                              <textarea
-                                value={example}
-                                onChange={(e) => {
-                                  const newExamples = [...editedCard.postExamples];
-                                  newExamples[idx] = e.target.value;
-                                  updateCardField('postExamples', newExamples);
-                                }}
-                                placeholder="Write an example post in your style..."
-                                className="w-full bg-white/5 border border-white/20 rounded-lg px-3 py-2 pr-10 text-white/80 text-sm focus:outline-none focus:border-purple-400/50 resize-none"
-                                rows={2}
-                              />
-                              {editedCard.postExamples.length > 1 && (
-                                <button
-                                  onClick={() => removePostExample(idx)}
-                                  className="absolute top-2 right-2 p-1 rounded-lg bg-red-500/20 text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/40 transition-all"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                              <div className="absolute bottom-2 right-2 text-white/20 text-[10px]">
-                                {example.length}/280
-                              </div>
-                            </div>
-                          ))}
-                          <button
-                            onClick={addPostExample}
-                            className="w-full flex items-center justify-center gap-2 p-2 border border-dashed border-purple-500/30 rounded-lg text-purple-400/70 text-sm hover:bg-purple-500/10 hover:border-purple-500/50 transition-all"
-                          >
-                            <Plus className="w-4 h-4" />
-                            Add Post Example
-                          </button>
-                        </>
-                      ) : (
-                        editedCard.postExamples.slice(0, 5).map((example, idx) => (
-                          <div
-                            key={idx}
-                            className="p-3 rounded-lg bg-white/5 border border-white/10 text-white/70 text-sm"
-                          >
-                            "{example}"
+                      
+                      {/* Post examples list - read only with delete */}
+                      {editedCard.postExamples.map((example, idx) => (
+                        <div
+                          key={idx}
+                          className="relative group p-3 rounded-lg bg-white/5 border border-white/10"
+                        >
+                          <p className="text-white/70 text-sm pr-8">"{example}"</p>
+                          {state === 'editing' && editedCard.postExamples.length > 1 && (
+                            <button
+                              onClick={() => removePostExample(idx)}
+                              className="absolute top-2 right-2 p-1.5 rounded-lg bg-red-500/20 text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/40 transition-all"
+                              title="Remove example"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      
+                      {/* Add new post example (only in edit mode) */}
+                      {state === 'editing' && (
+                        <div className="pt-2 space-y-2">
+                          <textarea
+                            value={newPostExampleInput}
+                            onChange={(e) => setNewPostExampleInput(e.target.value)}
+                            placeholder="Write a new example post in your style..."
+                            className="w-full bg-white/5 border border-white/20 rounded-lg px-3 py-2 text-white/80 text-sm focus:outline-none focus:border-purple-400/50 resize-none placeholder:text-white/30"
+                            rows={2}
+                          />
+                          <div className="flex items-center justify-between">
+                            <span className="text-white/30 text-xs">
+                              {newPostExampleInput.length}/280
+                            </span>
+                            <button
+                              onClick={() => {
+                                if (newPostExampleInput.trim()) {
+                                  updateCardField('postExamples', [...editedCard.postExamples, newPostExampleInput.trim()]);
+                                  setNewPostExampleInput('');
+                                }
+                              }}
+                              disabled={!newPostExampleInput.trim()}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-purple-500/20 text-purple-400 text-sm hover:bg-purple-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              <Plus className="w-4 h-4" />
+                              Add Example
+                            </button>
                           </div>
-                        ))
+                        </div>
                       )}
                     </div>
                   )}
