@@ -88,7 +88,7 @@ const BaseIcon = ({ className }: { className?: string }) => (
 export function HomePage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const { showError, showInfo } = useNotifications();
+  const { showError } = useNotifications();
   // Initial welcome message - will be updated when character card loads
   const getWelcomeMessage = useCallback((card?: ElizaOSCharacterCard | null): Message => ({
     id: 'welcome',

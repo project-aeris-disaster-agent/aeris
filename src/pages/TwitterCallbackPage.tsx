@@ -5,7 +5,7 @@ import { getTwitterOAuthService } from '@/services/twitterOAuth';
 import { exchangeCodeForTokens } from '@/services/twitterApi';
 import { AuthService } from '@/services/auth';
 import { supabase } from '@/lib/supabase';
-import { Loader2, CheckCircle2, XCircle, Sparkles } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { DitheringShader } from '@/components/ui/dithering-shader';
 
