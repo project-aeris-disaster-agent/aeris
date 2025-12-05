@@ -89,5 +89,46 @@
   .animation-delay-4000 {
     animation-delay: 4s;
   }
+
+  /* Custom scrollbar for message window - black track, grey thumb */
+  .message-scrollbar {
+    scrollbar-color: #808080 #000000; /* Firefox: thumb track */
+  }
+
+  .message-scrollbar::-webkit-scrollbar {
+    width: 12px;
+  }
+
+  .message-scrollbar::-webkit-scrollbar-track {
+    background: #000000; /* Black track */
+  }
+
+  .message-scrollbar::-webkit-scrollbar-thumb {
+    background: #808080; /* Grey thumb */
+    border-radius: 6px;
+  }
+
+  .message-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #999999; /* Lighter grey on hover */
+  }
+
+  .message-scrollbar::-webkit-scrollbar-button {
+    background: #000000; /* Black background for arrow buttons */
+  }
+
+  .message-scrollbar::-webkit-scrollbar-button:single-button {
+    background-color: #000000;
+    border: none;
+  }
+
+  .message-scrollbar::-webkit-scrollbar-button:single-button:vertical:decrement {
+    border-width: 0 6px 6px 6px;
+    border-color: transparent transparent #808080 transparent;
+  }
+
+  .message-scrollbar::-webkit-scrollbar-button:single-button:vertical:increment {
+    border-width: 6px 6px 0 6px;
+    border-color: #808080 transparent transparent transparent;
+  }
 }
 

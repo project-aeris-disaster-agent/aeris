@@ -5,6 +5,7 @@ import { Mail, Lock, Eye, EyeClosed, ArrowRight, User } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { getTwitterOAuthService } from '@/services/twitterOAuth';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNotifications } from '@/contexts/NotificationContext';
 
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
@@ -29,6 +30,7 @@ interface NewAuthCardProps {
 export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
   const { signIn, signUp } = useAuth();
   const navigate = useNavigate();
+  const { showError } = useNotifications();
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -130,7 +132,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
       console.error('Twitter sign-in error:', error);
       setIsTwitterLoading(false);
       // Show error to user
-      alert('Failed to initiate Twitter sign-in. Please check your environment variables.');
+      showError('Failed to initiate Twitter sign-in. Please check your environment variables.');
     }
   };
 

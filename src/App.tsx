@@ -5,6 +5,7 @@ import { TwitterCallbackPage } from './pages/TwitterCallbackPage';
 import { EmailCallbackPage } from './pages/EmailCallbackPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { useAuth } from './contexts/AuthContext';
+import { NotificationProvider } from './contexts/NotificationContext';
 
 // Check for required environment variables
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -46,23 +47,25 @@ function App() {
   }
 
   return (
-    <Routes>
-      <Route 
-        path="/" 
-        element={user ? <Navigate to="/home" replace /> : <AuthPage />} 
-      />
-      <Route path="/auth" element={<AuthPage />} />
-      <Route 
-        path="/home" 
-        element={
-          <ProtectedRoute>
-            <HomePage />
-          </ProtectedRoute>
-        } 
-      />
-      <Route path="/auth/twitter/callback" element={<TwitterCallbackPage />} />
-      <Route path="/auth/callback" element={<EmailCallbackPage />} />
-    </Routes>
+    <NotificationProvider>
+      <Routes>
+        <Route 
+          path="/" 
+          element={user ? <Navigate to="/home" replace /> : <AuthPage />} 
+        />
+        <Route path="/auth" element={<AuthPage />} />
+        <Route 
+          path="/home" 
+          element={
+            <ProtectedRoute>
+              <HomePage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route path="/auth/twitter/callback" element={<TwitterCallbackPage />} />
+        <Route path="/auth/callback" element={<EmailCallbackPage />} />
+      </Routes>
+    </NotificationProvider>
   );
 }
 

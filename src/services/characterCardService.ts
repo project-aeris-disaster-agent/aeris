@@ -70,7 +70,13 @@ export async function generateCharacterCard(
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(data.error || 'Failed to generate character card');
+    // Create error with full details
+    const error: any = new Error(data.error || 'Failed to generate character card');
+    error.error = data.error;
+    error.error_code = data.error_code;
+    error.error_details = data.error_details;
+    error.suggestion = data.suggestion;
+    throw error;
   }
 
   return data;

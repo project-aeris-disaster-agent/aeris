@@ -270,7 +270,46 @@ export function CharacterCardModal({
       setState('preview');
     } catch (err: any) {
       console.error('Generation failed:', err);
-      setError(err.message || 'Failed to generate character card');
+      
+      // Extract detailed error information
+      let errorMessage = err.message || 'Failed to generate character card';
+      let errorDetails = '';
+      
+      // Check if error response has detailed information
+      if (err.error || (typeof err === 'object' && err.error)) {
+        const errorData = err.error || err;
+        errorMessage = errorData.error || errorMessage;
+        
+        if (errorData.error_code) {
+          errorDetails += `Error Code: ${errorData.error_code}. `;
+        }
+        
+        if (errorData.error_details) {
+          if (typeof errorData.error_details === 'string') {
+            errorDetails += errorData.error_details;
+          } else if (errorData.error_details.errors && Array.isArray(errorData.error_details.errors)) {
+            errorDetails += errorData.error_details.errors.map((e: any) => e.message || e.detail).join('; ');
+          }
+        }
+        
+        if (errorData.suggestion) {
+          errorDetails += ` ${errorData.suggestion}`;
+        }
+      }
+      
+      // Check if it's a rate limit or auth error
+      const isRateLimit = errorMessage.includes('429') || errorMessage.toLowerCase().includes('rate limit');
+      const isAuthError = errorMessage.includes('401') || errorMessage.includes('403') || errorMessage.toLowerCase().includes('authentication') || errorMessage.toLowerCase().includes('token');
+      
+      if (isAuthError) {
+        errorMessage = `Twitter Authentication Failed: ${errorMessage}`;
+        errorDetails = 'Your Twitter access token may have expired. Please reconnect your Twitter account.';
+      } else if (isRateLimit) {
+        errorMessage = `Twitter API Rate Limited: ${errorMessage}`;
+        errorDetails = 'Twitter API rate limit reached. You can proceed with Grok native analysis (no Twitter API required).';
+      }
+      
+      setError(errorDetails || errorMessage);
       setState('error');
     }
   };
@@ -500,6 +539,32 @@ export function CharacterCardModal({
                 </div>
                 <h3 className="text-xl font-bold text-white mb-2">Generation Failed</h3>
                 <p className="text-white/60 text-center max-w-md mb-6">{error}</p>
+                
+                {/* Check if it's a rate limit or Twitter API issue - offer Grok native fallback */}
+                {error && (error.includes('429') || error.toLowerCase().includes('rate limit') || error.toLowerCase().includes('twitter api')) && (
+                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 mb-6 max-w-md">
+                    <p className="text-yellow-300 text-sm mb-3">
+                      <strong>Option:</strong> You can proceed with Grok native analysis (no Twitter API required). 
+                      This will use Grok's built-in Twitter access to analyze your account.
+                    </p>
+                    <button
+                      onClick={async () => {
+                        // Temporarily disable Twitter API mode and retry
+                        setError(null);
+                        setState('generating');
+                        // The Edge Function will automatically fallback, but we can force Grok native
+                        // by not providing access_token (but we need it for user_id lookup)
+                        // Actually, the Edge Function should handle this automatically now
+                        await startGeneration();
+                      }}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/50 text-yellow-300 transition-colors"
+                    >
+                      <Zap className="w-4 h-4" />
+                      Proceed with Grok Native Analysis
+                    </button>
+                  </div>
+                )}
+                
                 <div className="flex gap-3">
                   <button
                     onClick={startGeneration}

@@ -122,6 +122,8 @@ interface ElizaOSCharacterCard {
 // ============================================================================
 
 // Enable Twitter API for richer context (uses 2 API calls per generation)
+// Set to false to use Grok's native Twitter access (no rate limits)
+// If true, will automatically fallback to Grok native on 429 rate limit errors
 const USE_TWITTER_API_FOR_TWEETS = true;
 
 // Number of tweets to fetch (keep low to conserve rate limits)
@@ -278,8 +280,39 @@ async function fetchUserProfileWithPinnedTweet(accessToken: string): Promise<Twi
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('Twitter profile API error:', response.status, errorText);
-    throw new Error(`Failed to fetch profile: ${response.status}`);
+    
+    // Enhanced error logging
+    console.error('═══════════════════════════════════════════════════════════');
+    console.error('Twitter API Profile Error Details:');
+    console.error('Status:', response.status);
+    console.error('Status Text:', response.statusText);
+    console.error('Response Headers:', JSON.stringify(Object.fromEntries(response.headers.entries())));
+    console.error('Error Response Body:', errorText);
+    console.error('Request URL:', 'https://api.twitter.com/2/users/me');
+    console.error('═══════════════════════════════════════════════════════════');
+    
+    // Create error with status code for rate limit detection
+    const error: any = new Error(`Failed to fetch profile: ${response.status}`);
+    error.status = response.status;
+    error.isRateLimit = response.status === 429;
+    error.responseText = errorText;
+    error.responseHeaders = Object.fromEntries(response.headers.entries());
+    
+    try {
+      const errorData = JSON.parse(errorText);
+      error.message = errorData.detail || errorData.title || errorData.error || `Failed to fetch profile: ${response.status}`;
+      error.errorData = errorData;
+      
+      // Log specific error details
+      if (errorData.errors && Array.isArray(errorData.errors)) {
+        console.error('Twitter API Error Details:', errorData.errors);
+        error.message = errorData.errors.map((e: any) => e.message || e.detail).join('; ') || error.message;
+      }
+    } catch {
+      error.message = `Failed to fetch profile: ${response.status}`;
+    }
+    
+    throw error;
   }
 
   const data = await response.json();
@@ -325,14 +358,40 @@ async function fetchUserTweets(
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('Twitter API error:', response.status, errorText);
+    
+    // Enhanced error logging
+    console.error('═══════════════════════════════════════════════════════════');
+    console.error('Twitter API Tweets Error Details:');
+    console.error('Status:', response.status);
+    console.error('Status Text:', response.statusText);
+    console.error('Response Headers:', JSON.stringify(Object.fromEntries(response.headers.entries())));
+    console.error('Error Response Body:', errorText);
+    console.error('Request URL:', `https://api.twitter.com/2/users/${userId}/tweets`);
+    console.error('Request Params:', params.toString());
+    console.error('═══════════════════════════════════════════════════════════');
+    
+    // Create error with status code for rate limit detection
+    const error: any = new Error(`Failed to fetch tweets: ${response.status}`);
+    error.status = response.status;
+    error.isRateLimit = response.status === 429;
+    error.responseText = errorText;
+    error.responseHeaders = Object.fromEntries(response.headers.entries());
     
     try {
-      const error = JSON.parse(errorText);
-      throw new Error(error.detail || error.title || `Twitter API error: ${response.status}`);
+      const errorData = JSON.parse(errorText);
+      error.message = errorData.detail || errorData.title || errorData.error || `Twitter API error: ${response.status}`;
+      error.errorData = errorData;
+      
+      // Log specific error details
+      if (errorData.errors && Array.isArray(errorData.errors)) {
+        console.error('Twitter API Error Details:', errorData.errors);
+        error.message = errorData.errors.map((e: any) => e.message || e.detail).join('; ') || error.message;
+      }
     } catch {
-      throw new Error(`Failed to fetch tweets: ${response.status}`);
+      error.message = `Failed to fetch tweets: ${response.status}`;
     }
+    
+    throw error;
   }
 
   const data = await response.json();
@@ -662,7 +721,7 @@ async function callGrokAPI<T>(
   console.log('Calling Grok API...');
   
   const requestBody = {
-    model: 'grok-beta',
+    model: 'grok-3-latest', // Updated from 'grok-beta' - that model no longer exists
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt }
@@ -740,6 +799,8 @@ async function callGrokAPI<T>(
 
     const errorText = await response.text();
     console.error(`Grok API error (attempt ${attempt + 1}):`, response.status, errorText);
+    console.error('Request body model:', requestBody.model);
+    console.error('API endpoint:', 'https://api.x.ai/v1/chat/completions');
     
     if (response.status === 429 && attempt < maxRetries - 1) {
       lastError = new Error('Rate limited');
@@ -750,8 +811,21 @@ async function callGrokAPI<T>(
     try {
       const errorJson = JSON.parse(errorText);
       errorMessage = errorJson.error?.message || errorJson.message || errorMessage;
+      
+      // Special handling for 404 - model not found
+      if (response.status === 404) {
+        errorMessage = `Grok API model not found (404). The model '${requestBody.model}' may not exist or your API key may not have access to it. Please check your Grok API configuration.`;
+        console.error('404 Error Details:', {
+          model: requestBody.model,
+          error: errorJson,
+          suggestion: 'Try using a different model name like "grok-3-latest"'
+        });
+      }
     } catch {
       // Use status code
+      if (response.status === 404) {
+        errorMessage = `Grok API model not found (404). The model '${requestBody.model}' may not exist. Please check your Grok API configuration.`;
+      }
     }
     throw new Error(errorMessage);
   }
@@ -1001,78 +1075,141 @@ serve(async (req) => {
 
     console.log(`Generating character card for Twitter user ${twitterUserId}`);
     console.log(`Mode: ${USE_TWITTER_API_FOR_TWEETS ? 'Twitter API + Grok' : 'Grok Native Analysis (rate-limit friendly)'}`);
+    console.log(`Access Token (first 20 chars): ${twitterAccessToken.substring(0, 20)}...`);
+    console.log(`Twitter User ID: ${twitterUserId}`);
 
-    let userProfile: TwitterUser;
+    let userProfile: TwitterUser | undefined;
     let tweets: TwitterTweet[] = [];
-    let analysis: DeepPersonalityAnalysis;
-    let examples: CharacterCardGeneration;
+    let analysis: DeepPersonalityAnalysis | undefined;
+    let examples: CharacterCardGeneration | undefined;
     let analysisMethod: string;
+    let profileWithPinned: TwitterProfileWithPinned | undefined;
 
     if (USE_TWITTER_API_FOR_TWEETS) {
       // ========================================
       // MODE 1: Twitter API + Grok (2 API calls total)
       // ========================================
-      let profileWithPinned: TwitterProfileWithPinned;
       
       try {
         // Optimized: 2 API calls only
         // Call 1: Profile + Pinned Tweet (via expansion)
-        // Call 2: Recent Tweets (limited to TWEETS_TO_FETCH)
         profileWithPinned = await fetchUserProfileWithPinnedTweet(twitterAccessToken);
-        tweets = await fetchUserTweets(twitterAccessToken, profileWithPinned.id, TWEETS_TO_FETCH);
         userProfile = profileWithPinned;
         
         console.log(`✓ Profile: @${profileWithPinned.username}`);
         console.log(`✓ Bio: "${profileWithPinned.description?.substring(0, 50)}..."`);
         console.log(`✓ Pinned: ${profileWithPinned.pinned_tweet ? 'Yes' : 'No'}`);
-        console.log(`✓ Tweets: ${tweets.length}`);
-      } catch (twitterError) {
-        console.error('Twitter API error:', twitterError);
-        return new Response(
-          JSON.stringify({ 
-            error: `Failed to fetch Twitter data: ${twitterError.message}`,
-            suggestion: 'Your Twitter token may have expired. Please reconnect your account.'
-          }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        
+        // Call 2: Recent Tweets (limited to TWEETS_TO_FETCH)
+        try {
+          tweets = await fetchUserTweets(twitterAccessToken, profileWithPinned.id, TWEETS_TO_FETCH);
+          console.log(`✓ Tweets: ${tweets.length}`);
+        } catch (tweetError: any) {
+          // If tweets fail but profile succeeded, check if it's rate limit
+          const isTweetRateLimit = tweetError.status === 429 || 
+                                  tweetError.isRateLimit ||
+                                  tweetError.message?.includes('429');
+          
+          if (isTweetRateLimit) {
+            console.log('⚠️ Tweets API rate limited, but profile fetched. Using Grok native for analysis...');
+            tweets = []; // Clear tweets, will use Grok native
+          } else {
+            // Re-throw non-rate-limit errors
+            throw tweetError;
+          }
+        }
+      } catch (twitterError: any) {
+        console.error('═══════════════════════════════════════════════════════════');
+        console.error('Twitter API Error Caught:');
+        console.error('Error Status:', twitterError.status);
+        console.error('Error Message:', twitterError.message);
+        console.error('Is Rate Limit:', twitterError.isRateLimit);
+        console.error('Error Data:', JSON.stringify(twitterError.errorData || {}, null, 2));
+        console.error('Response Text:', twitterError.responseText?.substring(0, 500));
+        console.error('Full Error:', twitterError);
+        console.error('═══════════════════════════════════════════════════════════');
+        
+        // Check if it's a rate limit error (429)
+        const isRateLimit = twitterError.status === 429 || 
+                           twitterError.isRateLimit ||
+                           twitterError.message?.includes('429') || 
+                           twitterError.message?.toLowerCase().includes('rate limit') ||
+                           twitterError.message?.toLowerCase().includes('too many requests');
+        
+        // Check for authentication errors (401, 403)
+        const isAuthError = twitterError.status === 401 || twitterError.status === 403;
+        
+        if (isRateLimit) {
+          console.log('⚠️ Twitter API rate limited (429). Automatically falling back to Grok native analysis...');
+          // Clear any partial data and fall through to Grok native mode
+          tweets = [];
+          userProfile = undefined;
+          profileWithPinned = undefined;
+          // Continue to Grok native mode below
+        } else if (isAuthError) {
+          // Authentication error - token likely expired or invalid
+          console.error('❌ Twitter API authentication failed. Token may be expired or invalid.');
+          return new Response(
+            JSON.stringify({ 
+              error: `Twitter authentication failed: ${twitterError.message}`,
+              error_code: twitterError.status,
+              error_details: twitterError.errorData,
+              suggestion: 'Your Twitter access token may have expired. Please reconnect your Twitter account in Settings.'
+            }),
+            { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        } else {
+          // For other errors (network, etc), return detailed error
+          return new Response(
+            JSON.stringify({ 
+              error: `Failed to fetch Twitter data: ${twitterError.message}`,
+              error_code: twitterError.status,
+              error_details: twitterError.errorData,
+              suggestion: 'Please check your Twitter connection and try again. If the problem persists, reconnect your Twitter account.'
+            }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
       }
+      
+      // If Twitter API succeeded with tweets, continue with normal flow
+      // If we have profile but no tweets (rate limited), fall through to Grok native
+      if (tweets.length > 0 && userProfile && profileWithPinned) {
+        try {
+          // Pass profile with pinned tweet for richer context
+          analysis = await performDeepAnalysis(profileWithPinned, tweets, grokApiKey);
+          examples = await generateCharacterExamples(userProfile, tweets, analysis, grokApiKey);
+          analysisMethod = 'twitter_api_plus_grok';
+        } catch (grokError) {
+          console.error('Grok API error:', grokError);
+          return new Response(
+            JSON.stringify({ 
+              error: `AI analysis failed: ${grokError.message}`,
+              details: 'The personality analysis service encountered an error.'
+            }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+      // If tweets.length === 0 or !userProfile, fall through to Grok native mode
 
-      if (tweets.length === 0) {
-        return new Response(
-          JSON.stringify({ 
-            error: 'No tweets found for analysis.',
-            suggestion: 'Make sure your account has public tweets and try again.'
-          }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      try {
-        // Pass profile with pinned tweet for richer context
-        analysis = await performDeepAnalysis(profileWithPinned, tweets, grokApiKey);
-        examples = await generateCharacterExamples(userProfile, tweets, analysis, grokApiKey);
-        analysisMethod = 'twitter_api_plus_grok';
-      } catch (grokError) {
-        console.error('Grok API error:', grokError);
-        return new Response(
-          JSON.stringify({ 
-            error: `AI analysis failed: ${grokError.message}`,
-            details: 'The personality analysis service encountered an error.'
-          }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-    } else {
+    }
+    
+    // If Twitter API failed or was rate limited, use Grok native mode
+    if (!analysis || !examples) {
       // ========================================
-      // MODE 2: Grok Native Analysis (no rate limits)
+      // MODE 2: Grok Native Analysis (no rate limits, automatic fallback)
       // ========================================
       // Use stored profile data from database + Grok's native X/Twitter access
-      userProfile = {
-        id: twitterUserId,
-        name: profile.full_name || profile.twitter_username,
-        username: profile.twitter_username,
-        profile_image_url: profile.profile_photo_url || undefined,
-      };
+      // If userProfile wasn't set (Twitter API failed), create it from database
+      if (!userProfile) {
+        userProfile = {
+          id: twitterUserId,
+          name: profile.full_name || profile.twitter_username || 'User',
+          username: profile.twitter_username || 'unknown',
+          profile_image_url: profile.profile_photo_url || undefined,
+        };
+      }
 
       const systemPrompt = `You are an expert personality analyst with native access to X/Twitter data.
 Your task is to analyze Twitter users and create accurate personality profiles.
@@ -1097,7 +1234,9 @@ Always respond with valid JSON only. Be specific and evidence-based.`;
         examples = await callGrokAPI<CharacterCardGeneration>(examplesPrompt, systemPrompt, grokApiKey);
         console.log('Generated character examples');
 
-        analysisMethod = 'grok_native_analysis';
+        analysisMethod = USE_TWITTER_API_FOR_TWEETS 
+          ? 'grok_native_analysis_fallback' 
+          : 'grok_native_analysis';
       } catch (grokError) {
         console.error('Grok API error:', grokError);
         return new Response(

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { DitheringShader } from '@/components/ui/dithering-shader';
 import { CharacterCardModal } from '@/components/CharacterCardModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNotifications } from '@/contexts/NotificationContext';
 import { supabase } from '@/lib/supabase';
 import { getCharacterCard } from '@/services/characterCardService';
 import { 
@@ -87,6 +88,7 @@ const BaseIcon = ({ className }: { className?: string }) => (
 export function HomePage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { showError, showInfo } = useNotifications();
   // Initial welcome message - will be updated when character card loads
   const getWelcomeMessage = useCallback((card?: ElizaOSCharacterCard | null): Message => ({
     id: 'welcome',
@@ -232,7 +234,7 @@ export function HomePage() {
       }
       
       // User hasn't connected Twitter
-      alert('Please connect your Twitter account first to generate your AI clone.\n\nGo to the Auth page and sign in with Twitter.');
+      showError('Please connect your Twitter account first to generate your AI clone. Go to the Auth page and sign in with Twitter.', 7000);
       return;
     }
     setModalMode('generate');
@@ -241,7 +243,7 @@ export function HomePage() {
 
   const handleEditClone = () => {
     if (!characterCard) {
-      alert('No character card found. Please generate your AI clone first.');
+      showError('No character card found. Please generate your AI clone first.');
       return;
     }
     setModalMode('edit');
@@ -352,19 +354,23 @@ export function HomePage() {
         }]);
       } else {
         // Show error response
+        const errorMsg = response.error || "Sorry, I'm having trouble responding right now. Please try again.";
+        showError(errorMsg);
         setMessages(prev => [...prev, {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: response.error || "Sorry, I'm having trouble responding right now. Please try again.",
+          content: errorMsg,
           timestamp: new Date(),
         }]);
       }
     } catch (err) {
       console.error('Chat error:', err);
+      const errorMsg = err instanceof Error ? err.message : "Oops! Something went wrong. Let me try that again in a moment.";
+      showError(errorMsg);
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: "Oops! Something went wrong. Let me try that again in a moment.",
+        content: errorMsg,
         timestamp: new Date(),
       }]);
     } finally {
@@ -578,7 +584,7 @@ export function HomePage() {
               </div>
               
               {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 message-scrollbar">
                 <AnimatePresence>
                   {messages.map((message) => (
                     <motion.div
