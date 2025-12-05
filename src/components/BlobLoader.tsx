@@ -3,7 +3,7 @@
 import React, { useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { extend } from '@react-three/fiber';
-import { MathUtils, Vector3, Color } from 'three';
+import { MathUtils, Vector3 } from 'three';
 import * as THREE from 'three';
 import { Environment, Lightformer } from '@react-three/drei';
 
