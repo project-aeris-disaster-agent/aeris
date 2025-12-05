@@ -29,6 +29,7 @@ import {
   Award
 } from 'lucide-react';
 import { AutomationDropdown } from '@/components/AutomationDropdown';
+import { GoogleCalendarWidget } from '@/components/GoogleCalendarWidget';
 
 interface Message {
   id: string;
@@ -99,7 +100,7 @@ export function HomePage() {
     timestamp: new Date(),
   }), []);
 
-  const [messages, setMessages] = useState<Message[]>([getWelcomeMessage()]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [hasAlterEgo, setHasAlterEgo] = useState(false);
@@ -196,6 +197,9 @@ export function HomePage() {
             content: m.content,
             timestamp: m.timestamp,
           })));
+        } else if (characterCard) {
+          // If no existing messages but character card exists, show welcome message
+          setMessages([getWelcomeMessage(characterCard)]);
         }
       } catch (err) {
         console.error('Failed to initialize chat session:', err);
@@ -433,7 +437,7 @@ export function HomePage() {
           <div className="w-full lg:w-72 flex-shrink-0 space-y-4 order-first">
             
             {/* Profile Card */}
-            <div className="bg-black/60 backdrop-blur-xl rounded-2xl border border-cyan-400/30 p-4 relative overflow-hidden">
+            <div className={`bg-black/60 backdrop-blur-xl rounded-2xl border border-cyan-400/30 p-4 relative overflow-hidden ${!hasAlterEgo ? 'feature-disabled' : ''}`}>
               {/* HUD corners */}
               <div className="absolute top-0 left-0 w-6 h-6 border-l-2 border-t-2 border-cyan-400" />
               <div className="absolute top-0 right-0 w-6 h-6 border-r-2 border-t-2 border-cyan-400" />
@@ -522,6 +526,60 @@ export function HomePage() {
               </div>
             </div>
 
+            {/* Welcome Message Card - Shown when no alter ego */}
+            {!hasAlterEgo && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5 }}
+                className="bg-gradient-to-br from-cyan-500/20 via-pink-500/20 to-cyan-500/20 backdrop-blur-xl rounded-2xl border-2 border-cyan-400/50 p-5 relative overflow-hidden welcome-message-highlight"
+              >
+                {/* Animated background glow */}
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-r from-cyan-400/10 via-pink-400/10 to-cyan-400/10"
+                  animate={{
+                    backgroundPosition: ['0% 50%', '100% 50%', '0% 50%'],
+                  }}
+                  transition={{
+                    duration: 3,
+                    repeat: Infinity,
+                    ease: 'linear',
+                  }}
+                  style={{
+                    backgroundSize: '200% 200%',
+                  }}
+                />
+                
+                {/* Content */}
+                <div className="relative z-10">
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="p-2 rounded-lg bg-white/10 border border-white/20">
+                      <Bot className="w-5 h-5 text-cyan-400" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-white font-bold text-sm mb-1">Welcome to SONA!</h3>
+                      <p className="text-white/90 text-xs leading-relaxed">
+                        {messages.find(m => m.id === 'welcome')?.content || "Hello! I'm ready to become your AI Alter Ego. Generate your clone first so I can learn your personality and start chatting in your unique voice!"}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {/* Arrow pointing to button */}
+                  <div className="flex items-center justify-center mt-3">
+                    <motion.div
+                      animate={{ y: [0, 5, 0] }}
+                      transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+                      className="text-cyan-400"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                      </svg>
+                    </motion.div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {/* Generate/Edit AI Clone Button */}
             {hasAlterEgo ? (
               <button
@@ -535,22 +593,25 @@ export function HomePage() {
                 </div>
               </button>
             ) : (
-              <button
+              <motion.button
                 onClick={handleGenerateClone}
                 disabled={isLoadingProfile}
-                className="w-full bg-gradient-to-r from-pink-600 to-cyan-500 rounded-xl p-[2px] hover:scale-[1.02] transition-transform disabled:opacity-50 disabled:hover:scale-100"
+                className="w-full rounded-xl hover:scale-[1.02] transition-transform disabled:opacity-50 disabled:hover:scale-100 gold-glow-button relative overflow-hidden"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.5, delay: 0.2 }}
               >
-                <div className="bg-black/80 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center justify-center gap-2">
+                <div className="bg-gradient-to-r from-pink-600 to-cyan-500 rounded-[10px] px-4 py-3 flex items-center justify-center gap-2 relative z-10">
                   <Sparkles className="w-4 h-4 text-white" />
                   <span className="text-white font-bold text-sm">GENERATE AI CLONE</span>
                   <Zap className="w-3 h-3 text-yellow-400" />
                 </div>
-              </button>
+              </motion.button>
             )}
           </div>
 
           {/* Center Panel - Chat Interface */}
-          <div className="flex-1 min-w-0 order-last lg:order-none">
+          <div className={`flex-1 min-w-0 order-last lg:order-none ${!hasAlterEgo ? 'feature-disabled' : ''}`}>
             <div className="flex flex-col h-[500px] lg:h-[600px] bg-black/40 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden">
               {/* Chat Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/30">
@@ -629,13 +690,14 @@ export function HomePage() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder="Message your AI Alter Ego..."
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/50 text-sm"
+                    placeholder={hasAlterEgo ? "Message your AI Alter Ego..." : "Generate your clone first..."}
+                    disabled={!hasAlterEgo}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/50 text-sm disabled:opacity-30 disabled:cursor-not-allowed"
                   />
                   <button
                     onClick={handleSendMessage}
-                    disabled={!inputValue.trim()}
-                    className="p-2.5 bg-gradient-to-r from-pink-600 to-cyan-500 rounded-xl disabled:opacity-50"
+                    disabled={!inputValue.trim() || !hasAlterEgo}
+                    className="p-2.5 bg-gradient-to-r from-pink-600 to-cyan-500 rounded-xl disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <Send className="w-4 h-4 text-white" />
                   </button>
@@ -656,7 +718,7 @@ export function HomePage() {
           </div>
 
           {/* Right Panel - Social Media Automation */}
-          <div className="w-full lg:w-72 flex-shrink-0 order-2 lg:order-last">
+          <div className={`w-full lg:w-72 flex-shrink-0 order-2 lg:order-last ${!hasAlterEgo ? 'feature-disabled' : ''}`}>
             <div className="bg-black/40 backdrop-blur-xl rounded-2xl border border-white/10 p-4">
               <h3 className="text-white font-bold mb-4 flex items-center gap-2 text-sm">
                 <Zap className="w-4 h-4 text-yellow-400" />
@@ -724,6 +786,11 @@ export function HomePage() {
                   <div className={`w-2 h-2 rounded-full ${socialAutomation.baseapp ? 'bg-green-400' : 'bg-white/20'}`} />
                 </div>
               </div>
+            </div>
+            
+            {/* Google Calendar Widget */}
+            <div className={`mt-4 ${!hasAlterEgo ? 'feature-disabled' : ''}`}>
+              <GoogleCalendarWidget isConnected={false} />
             </div>
           </div>
         </div>

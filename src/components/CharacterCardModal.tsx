@@ -28,6 +28,7 @@ import {
   exportCharacterCardAsJSON,
   getTwitterAccessToken,
 } from '@/services/characterCardService';
+import { BlobLoader } from '@/components/BlobLoader';
 
 interface TwitterProfileData {
   id: string;
@@ -493,17 +494,23 @@ export function CharacterCardModal({
             {/* Generating State */}
             {state === 'generating' && (
               <div className="flex flex-col items-center justify-center py-16">
+                {/* SONA Logo */}
                 <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                  className="relative w-24 h-24 mb-8"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.5 }}
+                  className="mb-8"
                 >
-                  <div className="absolute inset-0 rounded-full bg-gradient-to-r from-pink-600 to-cyan-500 opacity-20 blur-xl" />
-                  <div className="absolute inset-2 rounded-full bg-gradient-to-r from-pink-600 to-cyan-500 opacity-40" />
-                  <div className="absolute inset-4 rounded-full bg-black flex items-center justify-center">
-                    <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
-                  </div>
+                  <img 
+                    src="/Main Sona Asset 113@10x.png" 
+                    alt="SONA Logo" 
+                    className="h-16 w-auto"
+                  />
                 </motion.div>
+                
+                <div className="relative w-64 h-64 mb-8">
+                  <BlobLoader className="w-full h-full" />
+                </div>
 
                 <AnimatePresence mode="wait">
                   <motion.div
