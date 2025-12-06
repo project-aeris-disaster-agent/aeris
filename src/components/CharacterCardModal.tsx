@@ -138,13 +138,13 @@ function SuggestionBubble({ value, onAdd, color = 'pink' }: SuggestionBubbleProp
 }
 
 const statusMessages = [
-  { text: 'Connecting to Twitter API...', icon: '🐦' },
-  { text: 'Fetching your recent tweets...', icon: '📝' },
-  { text: 'Analyzing your writing style...', icon: '✍️' },
-  { text: 'Deep personality analysis (Pass 1)...', icon: '🧠' },
-  { text: 'Identifying unique voice patterns...', icon: '🎯' },
-  { text: 'Generating authentic examples (Pass 2)...', icon: '🤖' },
-  { text: 'Building your character card...', icon: '✨' },
+  { text: 'Connecting to Twitter API...', icon: '🐦', progress: 10 },
+  { text: 'Fetching your recent tweets...', icon: '📝', progress: 25 },
+  { text: 'Analyzing your writing style...', icon: '✍️', progress: 40 },
+  { text: 'Deep personality analysis (Pass 1)...', icon: '🧠', progress: 55 },
+  { text: 'Identifying unique voice patterns...', icon: '🎯', progress: 70 },
+  { text: 'Generating authentic examples (Pass 2)...', icon: '🤖', progress: 85 },
+  { text: 'Building your character card...', icon: '✨', progress: 95 },
 ];
 
 export function CharacterCardModal({
@@ -162,6 +162,8 @@ export function CharacterCardModal({
   const [editedCard, setEditedCard] = useState<ElizaOSCharacterCard | null>(existingCard || null);
   const [error, setError] = useState<string | null>(null);
   const [statusIndex, setStatusIndex] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const [hue, setHue] = useState(0);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     bio: true,
     style: true,
@@ -198,10 +200,39 @@ export function CharacterCardModal({
   // Progress animation during generation
   useEffect(() => {
     if (state === 'generating') {
-      const interval = setInterval(() => {
-        setStatusIndex((prev) => (prev + 1) % statusMessages.length);
+      // Initialize progress
+      setProgress(statusMessages[0].progress);
+      
+      // Color cycling animation (same speed as blob - 1 second per cycle)
+      // Use requestAnimationFrame for smooth color transitions
+      let animationFrameId: number;
+      let startTime = Date.now();
+      
+      const animateColors = () => {
+        const elapsed = (Date.now() - startTime) / 1000; // Convert to seconds
+        setHue((elapsed % 1.0)); // Cycle every 1 second, matching blob speed
+        animationFrameId = requestAnimationFrame(animateColors);
+      };
+      
+      animationFrameId = requestAnimationFrame(animateColors);
+      
+      const statusInterval = setInterval(() => {
+        setStatusIndex((prev) => {
+          const nextIndex = (prev + 1) % statusMessages.length;
+          // Update progress to match the new status
+          setProgress(statusMessages[nextIndex].progress);
+          return nextIndex;
+        });
       }, 2500);
-      return () => clearInterval(interval);
+      
+      return () => {
+        cancelAnimationFrame(animationFrameId);
+        clearInterval(statusInterval);
+      };
+    } else {
+      // Reset progress when not generating
+      setProgress(0);
+      setHue(0);
     }
   }, [state]);
 
@@ -247,6 +278,7 @@ export function CharacterCardModal({
     setState('generating');
     setError(null);
     setStatusIndex(0);
+    setProgress(statusMessages[0].progress);
 
     try {
       // Get access token from props or fetch from profile
@@ -260,6 +292,12 @@ export function CharacterCardModal({
       }
 
       const result = await generateCharacterCard(userId, accessToken);
+
+      // Set progress to 100% before transitioning
+      setProgress(100);
+      
+      // Small delay to show 100% completion
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       setEditedCard(result.character_card);
       setTwitterProfile(result.twitter_profile);
@@ -518,14 +556,49 @@ export function CharacterCardModal({
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
-                    className="text-center"
+                    className="text-center mb-6"
                   >
                     <span className="text-3xl mb-2 block">{statusMessages[statusIndex].icon}</span>
                     <p className="text-white/70">{statusMessages[statusIndex].text}</p>
                   </motion.div>
                 </AnimatePresence>
 
-                <div className="flex gap-1 mt-8">
+                {/* Progress Bar */}
+                <div className="w-full max-w-md px-4 mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-white/60 text-sm">Progress</span>
+                    <span className="text-cyan-400 font-bold text-sm">{Math.round(progress)}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full"
+                      initial={{ width: '0%' }}
+                      animate={{ width: `${progress}%` }}
+                      transition={{ duration: 0.5, ease: 'easeOut' }}
+                      style={{
+                        background: `linear-gradient(to right, 
+                          hsl(${hue * 360}, 80%, 60%), 
+                          hsl(${(hue * 360 + 60) % 360}, 90%, 65%), 
+                          hsl(${(hue * 360 + 120) % 360}, 80%, 60%))`,
+                        backgroundSize: '200% 100%',
+                      }}
+                    >
+                      <motion.div
+                        className="h-full w-full bg-gradient-to-r from-transparent via-white/30 to-transparent"
+                        animate={{
+                          x: ['-100%', '100%'],
+                        }}
+                        transition={{
+                          duration: 1.5,
+                          repeat: Infinity,
+                          ease: 'linear',
+                        }}
+                      />
+                    </motion.div>
+                  </div>
+                </div>
+
+                <div className="flex gap-1 mt-4">
                   {statusMessages.map((_, idx) => (
                     <div
                       key={idx}

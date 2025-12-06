@@ -31,11 +31,50 @@ export function TwitterCallbackPage() {
           return;
         }
 
-        // Validate state
+        // Validate state with detailed error logging
         const storedState = oauthService.getStoredState();
-        if (!state || state !== storedState) {
+        
+        // Enhanced debugging for production
+        console.log('🔍 State validation:', {
+          receivedState: state ? state.substring(0, 10) + '...' : null,
+          storedState: storedState ? storedState.substring(0, 10) + '...' : null,
+          statesMatch: state === storedState,
+          hasReceivedState: !!state,
+          hasStoredState: !!storedState,
+          origin: window.location.origin,
+          fullUrl: window.location.href,
+        });
+        
+        if (!state) {
           setStatus('error');
-          setMessage('Invalid state parameter. Please try again.');
+          setMessage('No state parameter received from Twitter. Please try again.');
+          console.error('❌ Missing state parameter in callback URL');
+          setTimeout(() => navigate('/auth'), 3000);
+          return;
+        }
+        
+        if (!storedState) {
+          setStatus('error');
+          setMessage('OAuth session expired or not found. Please try signing in again.');
+          console.error('❌ No stored state found in localStorage. This may happen if:', [
+            '1. The browser cleared localStorage',
+            '2. You opened the callback in a different browser/tab',
+            '3. The OAuth flow took longer than 10 minutes',
+            '4. There was a domain mismatch between redirects',
+          ].join('\n'));
+          setTimeout(() => navigate('/auth'), 3000);
+          return;
+        }
+        
+        if (state !== storedState) {
+          setStatus('error');
+          setMessage('Security validation failed. Please try signing in again.');
+          console.error('❌ State mismatch:', {
+            received: state.substring(0, 20),
+            stored: storedState.substring(0, 20),
+            receivedLength: state.length,
+            storedLength: storedState.length,
+          });
           setTimeout(() => navigate('/auth'), 3000);
           return;
         }

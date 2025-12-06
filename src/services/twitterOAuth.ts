@@ -67,9 +67,20 @@ export class TwitterOAuthService {
     const { codeVerifier, codeChallenge } = await this.generatePKCE();
     const state = this.generateState();
 
-    // Store code verifier and state in sessionStorage
-    sessionStorage.setItem('twitter_code_verifier', codeVerifier);
-    sessionStorage.setItem('twitter_state', state);
+    // Store code verifier and state in localStorage for better persistence across redirects
+    // Also store timestamp to allow cleanup of old entries
+    const timestamp = Date.now().toString();
+    localStorage.setItem('twitter_code_verifier', codeVerifier);
+    localStorage.setItem('twitter_state', state);
+    localStorage.setItem('twitter_oauth_timestamp', timestamp);
+    
+    // Debug logging for production to help diagnose OAuth issues
+    console.log('🔐 Twitter OAuth state stored:', {
+      state: state.substring(0, 10) + '...',
+      timestamp,
+      redirectUri: this.config.redirectUri,
+      origin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
+    });
 
     const params = new URLSearchParams({
       response_type: 'code',
@@ -95,25 +106,61 @@ export class TwitterOAuthService {
   }
 
   /**
-   * Get stored code verifier from sessionStorage
+   * Get stored code verifier from localStorage
    */
   getStoredCodeVerifier(): string | null {
-    return sessionStorage.getItem('twitter_code_verifier');
+    const verifier = localStorage.getItem('twitter_code_verifier');
+    const timestamp = localStorage.getItem('twitter_oauth_timestamp');
+    
+    // Clean up if older than 10 minutes (OAuth flows should complete quickly)
+    if (timestamp && verifier) {
+      const age = Date.now() - parseInt(timestamp, 10);
+      if (age > 10 * 60 * 1000) {
+        console.warn('⚠️ OAuth state expired, clearing old data');
+        this.clearStoredData();
+        return null;
+      }
+    }
+    
+    return verifier;
   }
 
   /**
-   * Get stored state from sessionStorage
+   * Get stored state from localStorage
    */
   getStoredState(): string | null {
-    return sessionStorage.getItem('twitter_state');
+    const state = localStorage.getItem('twitter_state');
+    const timestamp = localStorage.getItem('twitter_oauth_timestamp');
+    
+    // Clean up if older than 10 minutes
+    if (timestamp && state) {
+      const age = Date.now() - parseInt(timestamp, 10);
+      if (age > 10 * 60 * 1000) {
+        console.warn('⚠️ OAuth state expired, clearing old data');
+        this.clearStoredData();
+        return null;
+      }
+    }
+    
+    // Debug logging
+    console.log('🔍 Retrieving stored state:', {
+      hasState: !!state,
+      state: state ? state.substring(0, 10) + '...' : null,
+      timestamp,
+      age: timestamp ? `${Math.round((Date.now() - parseInt(timestamp, 10)) / 1000)}s` : 'unknown',
+      origin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
+    });
+    
+    return state;
   }
 
   /**
    * Clear stored OAuth data
    */
   clearStoredData(): void {
-    sessionStorage.removeItem('twitter_code_verifier');
-    sessionStorage.removeItem('twitter_state');
+    localStorage.removeItem('twitter_code_verifier');
+    localStorage.removeItem('twitter_state');
+    localStorage.removeItem('twitter_oauth_timestamp');
   }
 
   /**
