@@ -379,7 +379,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                 transition={{ delay: 0.2 }}
                 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-white to-white/80"
               >
-                {authMode === 'signup' ? 'Create Account' : 'Welcome Back'}
+                {authMode === 'signup' ? 'Create Account' : 'Early Access'}
               </motion.h1>
               
               <motion.p
@@ -745,7 +745,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.5 }}
               >
-                {authMode === 'login' ? "Don't have an account? " : "Already have an account? "}
+                {authMode === 'login' ? "Get the Newsletter & Updates " : "Already have an account? "}
                 <button
                   type="button"
                   onClick={() => {
