@@ -39,12 +39,13 @@ function EnvErrorPage() {
 }
 
 function App() {
-  const { user } = useAuth();
-
-  // Show error page if environment variables are missing
+  // Show error page if environment variables are missing BEFORE using hooks
   if (!hasRequiredEnv) {
     return <EnvErrorPage />;
   }
+
+  // Only call useAuth after we've confirmed env vars are present
+  const { user } = useAuth();
 
   return (
     <NotificationProvider>

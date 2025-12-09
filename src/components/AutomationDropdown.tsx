@@ -64,6 +64,8 @@ export function AutomationDropdown({
   const [customTime, setCustomTime] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [postStatus, setPostStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
+  const [newTagInput, setNewTagInput] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
@@ -87,10 +89,13 @@ export function AutomationDropdown({
     }
   }, [isOpen, characterCard, sessionId]);
 
-  // Sync editable content with the latest generated post
+  // Sync editable content and tags with the latest generated post
   useEffect(() => {
     if (recommendedPost?.content) {
       setEditableContent(recommendedPost.content);
+    }
+    if (recommendedPost?.suggestedTopics) {
+      setTags([...recommendedPost.suggestedTopics]);
     }
   }, [recommendedPost]);
 
@@ -109,15 +114,23 @@ export function AutomationDropdown({
     setIsGenerating(true);
     setPostStatus(null);
 
+    const tagsToUse = tags.length > 0 ? tags : undefined;
+    console.log('Generating post with tags:', tagsToUse);
+
     try {
       const post = await generateRecommendedPost(
         userId,
         characterCard,
         conversationHistory,
-        sessionId
+        sessionId,
+        tagsToUse
       );
       setRecommendedPost(post);
       setEditableContent(post.content);
+      // Update tags only if no tags exist yet (initial generation)
+      if (tags.length === 0 && post.suggestedTopics.length > 0) {
+        setTags([...post.suggestedTopics]);
+      }
     } catch (error) {
       console.error('Failed to generate post:', error);
       setPostStatus({
@@ -126,6 +139,25 @@ export function AutomationDropdown({
       });
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleDeleteTag = (indexToDelete: number) => {
+    setTags(prev => prev.filter((_, idx) => idx !== indexToDelete));
+  };
+
+  const handleAddTag = () => {
+    const trimmedTag = newTagInput.trim();
+    if (trimmedTag && !tags.includes(trimmedTag)) {
+      setTags(prev => [...prev, trimmedTag]);
+      setNewTagInput('');
+    }
+  };
+
+  const handleTagInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddTag();
     }
   };
 
@@ -327,7 +359,7 @@ export function AutomationDropdown({
                         <button
                           onClick={handleGeneratePost}
                           className="p-1.5 hover:bg-yellow-500/10 rounded-lg transition-colors border border-yellow-500/20 hover:border-yellow-500/40"
-                          title="Regenerate"
+                          title={tags.length > 0 ? `Regenerate with ${tags.length} tag(s)` : "Regenerate"}
                         >
                           <RefreshCw className="w-3.5 h-3.5 text-yellow-400/80" />
                         </button>
@@ -343,18 +375,49 @@ export function AutomationDropdown({
                           placeholder="Customize the generated copy..."
                         />
                       </div>
-                      {recommendedPost.suggestedTopics.length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-yellow-500/10 flex flex-wrap gap-1.5">
-                          {recommendedPost.suggestedTopics.map((topic, idx) => (
-                            <span
-                              key={idx}
-                              className="px-2 py-0.5 bg-yellow-500/10 text-yellow-400 text-[10px] font-medium rounded-full border border-yellow-500/30"
-                            >
-                              {topic}
-                            </span>
-                          ))}
+                      {/* Tags Section */}
+                      <div className="mt-2 pt-2 border-t border-yellow-500/10">
+                        <label className="text-yellow-400/70 text-[10px] font-semibold mb-1.5 block">
+                          Tags / Topics
+                        </label>
+                        {tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {tags.map((tag, idx) => (
+                              <span
+                                key={idx}
+                                className="px-2 py-0.5 bg-yellow-500/10 text-yellow-400 text-[10px] font-medium rounded-full border border-yellow-500/30 flex items-center gap-1.5 group"
+                              >
+                                {tag}
+                                <button
+                                  onClick={() => handleDeleteTag(idx)}
+                                  className="hover:bg-yellow-500/20 rounded-full p-0.5 transition-colors"
+                                  title="Remove tag"
+                                >
+                                  <X className="w-2.5 h-2.5 text-yellow-400/80 group-hover:text-yellow-400" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={newTagInput}
+                            onChange={(e) => setNewTagInput(e.target.value)}
+                            onKeyDown={handleTagInputKeyDown}
+                            placeholder="Add a tag..."
+                            className="flex-1 bg-black/60 border border-yellow-500/30 rounded px-2 py-1 text-white text-[10px] focus:outline-none focus:border-yellow-500/60 placeholder:text-white/30"
+                          />
+                          <button
+                            onClick={handleAddTag}
+                            disabled={!newTagInput.trim() || tags.includes(newTagInput.trim())}
+                            className="px-2 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 disabled:opacity-40 disabled:cursor-not-allowed border border-yellow-500/30 rounded text-yellow-400 text-[10px] font-semibold transition-colors"
+                            title="Add tag"
+                          >
+                            Add
+                          </button>
                         </div>
-                      )}
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-gradient-to-br from-black/60 to-black/40 rounded-lg p-4 text-center border-2 border-yellow-500/20">

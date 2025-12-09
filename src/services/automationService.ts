@@ -28,12 +28,12 @@ export async function generateRecommendedPost(
   userId: string,
   characterCard: ElizaOSCharacterCard,
   conversationHistory: ChatMessage[],
-  sessionId: string
+  sessionId: string,
+  customTags?: string[]
 ): Promise<RecommendedPost> {
   try {
     // Build context from character card
     const bio = characterCard.bio.join(' ');
-    const topics = characterCard.topics.join(', ');
     const postStyle = characterCard.style.post.join(', ');
     const postExamples = characterCard.postExamples.slice(0, 5).join('\n---\n');
     
@@ -43,25 +43,34 @@ export async function generateRecommendedPost(
       .map(m => `${m.role === 'user' ? 'User' : characterCard.name}: ${m.content}`)
       .join('\n');
 
-    // Call Edge Function to generate post (we'll create this)
+    // Call Edge Function to generate post
     const edgeFunctionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-post`;
     
+    const requestBody: Record<string, unknown> = {
+      user_id: userId,
+      session_id: sessionId,
+      character_card: characterCard,
+      conversation_context: recentContext,
+      bio,
+      post_style: postStyle,
+      post_examples: postExamples,
+    };
+
+    // Only include custom_tags if provided and not empty
+    if (customTags && customTags.length > 0) {
+      requestBody.custom_tags = customTags;
+      console.log('Sending custom_tags to edge function:', customTags);
+    } else {
+      console.log('No custom tags provided, using character card topics');
+    }
+
     const response = await fetch(edgeFunctionUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
       },
-      body: JSON.stringify({
-        user_id: userId,
-        session_id: sessionId,
-        character_card: characterCard,
-        conversation_context: recentContext,
-        bio,
-        topics,
-        post_style: postStyle,
-        post_examples: postExamples,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     const data = await response.json();
@@ -70,9 +79,14 @@ export async function generateRecommendedPost(
       throw new Error(data.error || 'Failed to generate post');
     }
 
+    // Use custom tags if provided, otherwise use suggested topics from API or character card
+    const finalTopics = customTags && customTags.length > 0 
+      ? customTags 
+      : (data.suggested_topics || characterCard.topics.slice(0, 3));
+
     return {
       content: data.post_content,
-      suggestedTopics: data.suggested_topics || characterCard.topics.slice(0, 3),
+      suggestedTopics: finalTopics,
       estimatedEngagement: data.estimated_engagement,
     };
   } catch (error) {
@@ -82,9 +96,14 @@ export async function generateRecommendedPost(
     const fallbackTopic = characterCard.topics[0] || 'thoughts';
     const fallbackStyle = characterCard.postExamples[0] || `Just thinking about ${fallbackTopic}...`;
     
+    // Use custom tags if provided in fallback scenario
+    const fallbackTopics = customTags && customTags.length > 0 
+      ? customTags 
+      : characterCard.topics.slice(0, 3);
+
     return {
       content: fallbackStyle,
-      suggestedTopics: characterCard.topics.slice(0, 3),
+      suggestedTopics: fallbackTopics,
     };
   }
 }

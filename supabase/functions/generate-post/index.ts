@@ -35,9 +35,9 @@ interface GeneratePostRequest {
   character_card: CharacterCard;
   conversation_context: string;
   bio: string;
-  topics: string;
   post_style: string;
   post_examples: string;
+  custom_tags?: string[];
 }
 
 serve(async (req) => {
@@ -63,53 +63,54 @@ serve(async (req) => {
       character_card,
       conversation_context,
       bio,
-      topics,
       post_style,
       post_examples,
+      custom_tags,
     }: GeneratePostRequest = await req.json();
 
-    // Build prompt for post generation
-    const postStyleTraits = character_card.style.post.join(', ');
-    const recentTopics = character_card.topics.slice(0, 5).join(', ');
+    // Debug logging
+    console.log('Received custom_tags:', custom_tags);
+    console.log('Custom tags length:', custom_tags?.length || 0);
 
+    // Determine which topics to use: custom tags take priority, otherwise use character card topics
+    const topicsToFocus = custom_tags && custom_tags.length > 0 
+      ? custom_tags 
+      : character_card.topics.slice(0, 5);
+    
+    console.log('Topics to focus on:', topicsToFocus);
+    
+    const topicsText = topicsToFocus.join(', ');
+
+    // Build system prompt - straightforward and clear
     const systemPrompt = `You are ${character_card.name}, an AI alter ego with a unique voice and personality.
 
-═══════════════════════════════════════════════════════════════════════════════
-YOUR IDENTITY
-═══════════════════════════════════════════════════════════════════════════════
+YOUR IDENTITY:
 ${bio}
 
-Your expertise: ${character_card.knowledge.join(', ')}
-Your interests: ${topics}
+Expertise: ${character_card.knowledge.join(', ')}
 
-═══════════════════════════════════════════════════════════════════════════════
-YOUR POSTING STYLE
-═══════════════════════════════════════════════════════════════════════════════
+${custom_tags && custom_tags.length > 0 
+  ? `REQUIRED FOCUS TOPICS (the post MUST be about these):\n${custom_tags.map((tag, idx) => `- ${tag}`).join('\n')}`
+  : `Interests: ${topicsText}`}
+
+POSTING STYLE:
 ${post_style}
 
-Example posts that match your voice:
+Example posts matching your voice:
 ${post_examples}
 
-═══════════════════════════════════════════════════════════════════════════════
-RECENT CONVERSATION CONTEXT
-═══════════════════════════════════════════════════════════════════════════════
-${conversation_context || 'No recent conversation context.'}
+${conversation_context ? `Recent conversation context:\n${conversation_context}` : ''}
 
-═══════════════════════════════════════════════════════════════════════════════
-TASK: Generate a Social Media Post
-═══════════════════════════════════════════════════════════════════════════════
+Generate a social media post (50-280 characters) that:
+- Matches your authentic voice from the examples
+- ${custom_tags && custom_tags.length > 0 
+    ? `Is DIRECTLY about these topics: ${topicsText}` 
+    : `Relates to your interests: ${topicsText}`}
+- Sounds natural and authentic, not generic
+- No hashtags unless that's your style
+- No emojis unless that's your style
 
-Generate a single social media post (tweet/X post) that:
-1. Matches your authentic voice and style from the examples above
-2. Is relevant to your interests: ${recentTopics}
-3. Draws inspiration from recent conversations if relevant
-4. Is engaging, authentic, and true to your personality
-5. Is between 50-280 characters (Twitter/X limit)
-6. Does NOT include hashtags unless they're naturally part of your style
-7. Does NOT include emojis unless they're naturally part of your style
-8. Sounds like something YOU would naturally post, not generic content
-
-Return ONLY the post content text, nothing else.`;
+Return ONLY the post text, nothing else.`;
 
     // Call Grok API (xAI) to generate the post
     const grokApiKey = Deno.env.get('GROK_API_KEY');
@@ -132,7 +133,9 @@ Return ONLY the post content text, nothing else.`;
           },
           {
             role: 'user',
-            content: 'Generate a post that I would naturally share on social media right now.',
+            content: custom_tags && custom_tags.length > 0
+              ? `Write a post about these topics: ${custom_tags.join(', ')}. Make it engaging and true to my voice.`
+              : 'Write a post that I would naturally share on social media right now.',
           },
         ],
         temperature: 0.8,
@@ -153,8 +156,10 @@ Return ONLY the post content text, nothing else.`;
       throw new Error('Failed to generate post content');
     }
 
-    // Extract suggested topics from the post or use character card topics
-    const suggestedTopics = character_card.topics.slice(0, 3);
+    // Extract suggested topics - use custom tags if provided, otherwise use character card topics
+    const suggestedTopics = custom_tags && custom_tags.length > 0 
+      ? custom_tags 
+      : character_card.topics.slice(0, 3);
 
     return new Response(
       JSON.stringify({
