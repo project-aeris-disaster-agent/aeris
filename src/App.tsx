@@ -7,10 +7,29 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 
-// Check for required environment variables
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const hasRequiredEnv = supabaseUrl && supabaseAnonKey;
+// Helper function to validate URL
+function isValidUrl(url: string | undefined): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  try {
+    const urlObj = new URL(trimmed);
+    return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+// Check for required environment variables with validation
+const rawSupabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const rawSupabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+const supabaseUrl = rawSupabaseUrl?.trim();
+const supabaseAnonKey = rawSupabaseAnonKey?.trim();
+
+const isValidSupabaseUrl = isValidUrl(supabaseUrl);
+const hasValidKey = supabaseAnonKey && supabaseAnonKey.length > 0;
+const hasRequiredEnv = isValidSupabaseUrl && hasValidKey;
 
 function EnvErrorPage() {
   return (
@@ -21,9 +40,16 @@ function EnvErrorPage() {
           Missing required environment variables. Please configure the following in your Vercel project settings:
         </p>
         <ul className="mb-4 list-disc space-y-2 pl-6 text-yellow-200">
-          <li>VITE_SUPABASE_URL: {supabaseUrl ? '✓ Set' : '✗ Missing'}</li>
-          <li>VITE_SUPABASE_ANON_KEY: {supabaseAnonKey ? '✓ Set' : '✗ Missing'}</li>
+          <li>VITE_SUPABASE_URL: {isValidSupabaseUrl ? '✓ Valid' : '✗ Invalid/Missing'} 
+            {rawSupabaseUrl && !isValidSupabaseUrl && ` (Value: "${rawSupabaseUrl.substring(0, 50)}${rawSupabaseUrl.length > 50 ? '...' : ''}")`}
+          </li>
+          <li>VITE_SUPABASE_ANON_KEY: {hasValidKey ? '✓ Set' : '✗ Missing'}</li>
         </ul>
+        {rawSupabaseUrl && !isValidSupabaseUrl && (
+          <p className="mb-4 text-sm text-yellow-400">
+            The URL must be a valid HTTP or HTTPS URL. Current value appears to be invalid.
+          </p>
+        )}
         <p className="mb-4 text-sm text-yellow-400">
           Go to: Vercel Dashboard → Project Settings → Environment Variables
         </p>
