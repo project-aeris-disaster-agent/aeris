@@ -7,6 +7,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
 interface PostRequest {
@@ -22,14 +23,10 @@ serve(async (req) => {
   }
 
   try {
-    const supabaseClient = createClient(
+    // Use service role key to bypass RLS and access user tokens
+    const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      {
-        global: {
-          headers: { Authorization: req.headers.get('Authorization')! },
-        },
-      }
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_KEY') ?? '',
     );
 
     const { user_id, content, platforms }: PostRequest = await req.json();
@@ -42,15 +39,16 @@ serve(async (req) => {
       throw new Error('At least one platform must be specified');
     }
 
-    // Get user's profile with social media tokens
-    const { data: profile, error: profileError } = await supabaseClient
+    // Get user's profile with social media tokens (using admin client to bypass RLS)
+    const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
       .select('twitter_access_token, twitter_user_id, twitter_username')
       .eq('id', user_id)
       .single();
 
     if (profileError || !profile) {
-      throw new Error('User profile not found');
+      console.error('Profile fetch error:', profileError);
+      throw new Error(`User profile not found: ${profileError?.message || 'No profile data'}`);
     }
 
     const results: Array<{ success: boolean; platform: string; error?: string; post_id?: string }> = [];
@@ -69,6 +67,25 @@ serve(async (req) => {
             continue;
           }
 
+          // First, verify token can read (to confirm it's valid)
+          const verifyResponse = await fetch('https://api.twitter.com/2/users/me', {
+            headers: {
+              'Authorization': `Bearer ${profile.twitter_access_token}`,
+            },
+          });
+          
+          if (!verifyResponse.ok) {
+            const verifyError = await verifyResponse.text();
+            console.error('Token verification failed:', verifyResponse.status, verifyError);
+            results.push({
+              success: false,
+              platform: 'twitter',
+              error: `Token invalid: ${verifyResponse.status}`,
+            });
+            continue;
+          }
+
+          // Token is valid, try to post
           const twitterResponse = await fetch('https://api.twitter.com/2/tweets', {
             method: 'POST',
             headers: {
@@ -82,11 +99,41 @@ serve(async (req) => {
 
           if (!twitterResponse.ok) {
             const errorData = await twitterResponse.text();
-            console.error('Twitter API error:', errorData);
+            let errorMessage = `Twitter API error: ${twitterResponse.status}`;
+            let fullErrorDetails = errorData;
+            
+            try {
+              const errorJson = JSON.parse(errorData);
+              // Extract ALL error info for debugging
+              fullErrorDetails = JSON.stringify(errorJson, null, 2);
+              
+              // Common Twitter API v2 error formats
+              if (errorJson.detail) {
+                errorMessage = errorJson.detail;
+              } else if (errorJson.title) {
+                errorMessage = `${errorJson.title}: ${errorJson.detail || ''}`;
+              } else if (errorJson.errors && Array.isArray(errorJson.errors)) {
+                errorMessage = errorJson.errors.map((e: any) => e.message || e.detail || JSON.stringify(e)).join('; ');
+              } else if (errorJson.error_description) {
+                errorMessage = errorJson.error_description;
+              }
+              
+              console.error('🚫 Twitter API POST error:', {
+                status: twitterResponse.status,
+                statusText: twitterResponse.statusText,
+                fullError: errorJson,
+                tokenPrefix: profile.twitter_access_token?.substring(0, 20) + '...',
+                tokenLength: profile.twitter_access_token?.length,
+                contentLength: content.length,
+              });
+            } catch {
+              console.error('Twitter API error (raw text):', errorData);
+            }
+            
             results.push({
               success: false,
               platform: 'twitter',
-              error: `Twitter API error: ${twitterResponse.status}`,
+              error: `${errorMessage} (Status: ${twitterResponse.status}). Full details: ${fullErrorDetails}`,
             });
             continue;
           }
@@ -99,7 +146,7 @@ serve(async (req) => {
           });
 
           // Save to scheduled_posts table as "posted"
-          await supabaseClient.from('scheduled_posts').insert({
+          await supabaseAdmin.from('scheduled_posts').insert({
             user_id,
             content,
             post_type: 'tweet',

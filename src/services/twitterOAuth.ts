@@ -86,7 +86,7 @@ export class TwitterOAuthService {
       response_type: 'code',
       client_id: this.config.clientId,
       redirect_uri: this.config.redirectUri,
-      scope: (this.config.scopes || ['tweet.read', 'users.read', 'offline.access']).join(' '),
+      scope: (this.config.scopes || ['tweet.read', 'tweet.write', 'users.read', 'offline.access']).join(' '),
       state: state,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
@@ -185,7 +185,11 @@ export function getTwitterOAuthService(): TwitterOAuthService {
     // Always use the environment variable if set, otherwise fall back to current origin
     // This ensures the redirect URI matches what's configured in Twitter Developer Portal
     const redirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI || `${window.location.origin}/auth/twitter/callback`;
-    const scopes = import.meta.env.VITE_TWITTER_SCOPES?.split(',') || ['tweet.read', 'users.read', 'offline.access'];
+    // Always include tweet.write for posting functionality
+    const envScopes = import.meta.env.VITE_TWITTER_SCOPES?.split(',').map(s => s.trim()) || [];
+    const defaultScopes = ['tweet.read', 'tweet.write', 'users.read', 'offline.access'];
+    // Merge env scopes with defaults, ensuring tweet.write is always included
+    const scopes = [...new Set([...envScopes, ...defaultScopes])];
 
     if (!clientId) {
       throw new Error('VITE_TWITTER_CLIENT_ID is not set in environment variables');

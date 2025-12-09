@@ -57,6 +57,7 @@ export function AutomationDropdown({
   const [isOpen, setIsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [recommendedPost, setRecommendedPost] = useState<RecommendedPost | null>(null);
+  const [editableContent, setEditableContent] = useState('');
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   const [scheduleType, setScheduleType] = useState<ScheduleType>('instant');
   const [customDate, setCustomDate] = useState('');
@@ -86,6 +87,13 @@ export function AutomationDropdown({
     }
   }, [isOpen, characterCard, sessionId]);
 
+  // Sync editable content with the latest generated post
+  useEffect(() => {
+    if (recommendedPost?.content) {
+      setEditableContent(recommendedPost.content);
+    }
+  }, [recommendedPost]);
+
   // Update selected platforms based on connected platforms
   useEffect(() => {
     const platforms: string[] = [];
@@ -109,6 +117,7 @@ export function AutomationDropdown({
         sessionId
       );
       setRecommendedPost(post);
+      setEditableContent(post.content);
     } catch (error) {
       console.error('Failed to generate post:', error);
       setPostStatus({
@@ -129,13 +138,22 @@ export function AutomationDropdown({
       return;
     }
 
+    const contentToPost = editableContent.trim();
+    if (!contentToPost) {
+      setPostStatus({
+        type: 'error',
+        message: 'Post content cannot be empty.',
+      });
+      return;
+    }
+
     setIsPosting(true);
     setPostStatus(null);
 
     try {
       if (scheduleType === 'instant') {
         // Post immediately
-        const results = await postImmediately(userId, recommendedPost.content, selectedPlatforms);
+        const results = await postImmediately(userId, contentToPost, selectedPlatforms);
         const allSuccess = results.every(r => r.success);
         
         if (allSuccess) {
@@ -150,9 +168,12 @@ export function AutomationDropdown({
           }, 3000);
         } else {
           const errors = results.filter(r => !r.success);
+          // Show detailed error message from Twitter API
+          const errorDetails = errors.map(e => `${e.platform}: ${e.error || 'Unknown error'}`).join('\n');
+          console.error('Post failed with errors:', errorDetails);
           setPostStatus({
             type: 'error',
-            message: `Failed to post to: ${errors.map(e => e.platform).join(', ')}`,
+            message: `Failed to post to: ${errors.map(e => e.platform).join(', ')}. Error: ${errors[0]?.error || 'Unknown'}`,
           });
         }
       } else {
@@ -173,7 +194,7 @@ export function AutomationDropdown({
           scheduledDate = calculateNextScheduleTime(scheduleType as '24hrs' | '48hrs' | '72hrs' | 'daily' | 'weekly');
         }
 
-        await schedulePost(userId, recommendedPost.content, scheduledDate, selectedPlatforms);
+          await schedulePost(userId, contentToPost, scheduledDate, selectedPlatforms);
         
         setPostStatus({
           type: 'success',
@@ -311,9 +332,17 @@ export function AutomationDropdown({
                           <RefreshCw className="w-3.5 h-3.5 text-yellow-400/80" />
                         </button>
                       </div>
-                      <p className="text-white text-xs leading-tight whitespace-pre-wrap mb-2">
-                        {recommendedPost.content}
-                      </p>
+                      <div className="space-y-1">
+                        <label className="text-yellow-400/70 text-[10px] font-semibold flex items-center gap-1">
+                          <span>Edit before posting</span>
+                        </label>
+                        <textarea
+                          value={editableContent}
+                          onChange={(e) => setEditableContent(e.target.value)}
+                          className="w-full bg-black/60 border border-yellow-500/30 rounded-lg p-2 text-white text-xs leading-tight focus:outline-none focus:border-yellow-500/60 min-h-[96px] resize-vertical"
+                          placeholder="Customize the generated copy..."
+                        />
+                      </div>
                       {recommendedPost.suggestedTopics.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-yellow-500/10 flex flex-wrap gap-1.5">
                           {recommendedPost.suggestedTopics.map((topic, idx) => (
@@ -447,7 +476,12 @@ export function AutomationDropdown({
                   <div className="pt-2 border-t-2 border-yellow-500/30">
                     <button
                       onClick={handlePost}
-                      disabled={isPosting || !recommendedPost || selectedPlatforms.length === 0}
+                      disabled={
+                        isPosting ||
+                        !recommendedPost ||
+                        selectedPlatforms.length === 0 ||
+                        !editableContent.trim()
+                      }
                       className="w-full bg-gradient-to-r from-yellow-500 via-yellow-600 to-orange-500 hover:from-yellow-400 hover:via-yellow-500 hover:to-orange-400 rounded-lg px-4 py-3 text-black font-extrabold text-sm hover:scale-[1.02] transition-all disabled:opacity-50 disabled:hover:scale-100 flex items-center justify-center gap-2 border-2 border-yellow-400/60 shadow-2xl shadow-yellow-500/40 disabled:shadow-none uppercase tracking-wider"
                     >
                       {isPosting ? (

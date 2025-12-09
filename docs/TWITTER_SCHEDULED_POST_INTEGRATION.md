@@ -75,21 +75,26 @@ This document outlines how to integrate the **Twitter Social Media Automation** 
 
 ---
 
-## ❌ What's Missing (Critical Gap)
+## ✅ Scheduled Post Execution Worker
 
-### **Scheduled Post Execution System**
+### **What’s implemented now**
 
-Currently, posts are **saved** to the database but **never automatically executed** when their `scheduled_for` time arrives. You need:
+- Edge Function: `supabase/functions/process-scheduled-posts/index.ts`
+- Purpose: Poll `scheduled_posts` for due items (`status='pending'` and `scheduled_for <= now`) and post them to Twitter, then update status (`posted`/`failed`) and metadata (tweet id, posted_via).
+- Safety: Uses service role key; optional `CRON_SECRET` bearer token for cron invocations.
+- Platforms: Twitter implemented; other platforms return `unsupported_platform`.
 
-1. **Cron Job / Scheduled Task System**
-   - Periodically check for posts where `scheduled_for <= now()` AND `status = 'pending'`
-   - Execute these posts via the `post-to-social` Edge Function
-   - Update post status to 'posted' or 'failed'
+### **How to run it (cron trigger)**
 
-2. **Options for Implementation**:
-   - **Option A**: Supabase Database Webhooks + Edge Function (Recommended)
-   - **Option B**: Supabase pg_cron extension (PostgreSQL cron)
-   - **Option C**: External cron service (Vercel Cron, GitHub Actions, etc.)
+1. Deploy the function: `supabase functions deploy process-scheduled-posts --no-verify-jwt`
+2. Configure a schedule (Supabase Scheduled Functions or external cron) to `POST` the function URL every 1–5 minutes.
+   - Supabase Scheduled Functions example (dashboard): target `process-scheduled-posts`, frequency `* * * * *` (every minute).
+   - External cron: call the public Edge Function URL with header `Authorization: Bearer <CRON_SECRET>` if you set one.
+3. Ensure env vars are set in Supabase:
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `CRON_SECRET` (optional but recommended)
+4. Confirm `profiles.twitter_access_token` exists for users; missing tokens will mark jobs as `failed`.
 
 ---
 
@@ -154,9 +159,9 @@ Currently, posts are **saved** to the database but **never automatically execute
 
 ## Implementation Plan
 
-### Phase 1: Create Scheduled Post Execution Edge Function
+### Phase 1: Scheduled Post Execution Edge Function
 
-**File**: `supabase/functions/execute-scheduled-posts/index.ts`
+**File**: `supabase/functions/process-scheduled-posts/index.ts`
 
 **Purpose**: 
 - Query pending posts that are due
@@ -169,21 +174,20 @@ Currently, posts are **saved** to the database but **never automatically execute
   - Fetch user's Twitter tokens
   - Call Twitter API v2 to post
   - Update status to 'posted' or 'failed'
-- Handle rate limits
-- Log execution results
+- Handles unsupported platforms gracefully
+- Best-effort job claiming to avoid double-processing
 
 ### Phase 2: Set Up Cron/Scheduler
 
-#### **Option A: Supabase Database Webhooks (Recommended)**
+#### **Option A: Supabase Scheduled Functions (Recommended)**
 
 **How it works**:
-- Use Supabase Database Webhooks to trigger on `scheduled_posts` inserts
-- Or use a scheduled Edge Function invocation
+- Supabase cron triggers the Edge Function on a schedule (e.g., every minute).
 
 **Implementation**:
-1. Create Edge Function: `execute-scheduled-posts`
-2. Set up Supabase Cron (if available) or use external service
-3. Configure to run every 1-5 minutes
+1. Deploy Edge Function: `process-scheduled-posts`
+2. Create a schedule in Supabase dashboard: every minute (`* * * * *`)
+3. (Optional) Set `CRON_SECRET` and send `Authorization: Bearer <CRON_SECRET>` from the scheduler
 
 #### **Option B: Supabase pg_cron Extension**
 

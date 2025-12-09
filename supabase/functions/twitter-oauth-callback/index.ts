@@ -64,6 +64,29 @@ serve(async (req) => {
 
     const tokens = await tokenResponse.json();
 
+    // CRITICAL: Log what Twitter actually returned
+    console.log('🔑 Twitter token exchange result:', {
+      hasAccessToken: !!tokens.access_token,
+      tokenType: tokens.token_type,
+      expiresIn: tokens.expires_in,
+      scopeReturned: tokens.scope, // <-- What scopes did Twitter ACTUALLY grant?
+      tokenPrefix: tokens.access_token?.substring(0, 20) + '...',
+      tokenLength: tokens.access_token?.length,
+    });
+    
+    // Verify the token includes write scope
+    const grantedScopes = tokens.scope?.split(' ') || [];
+    const hasWriteScope = grantedScopes.includes('tweet.write');
+    console.log('📝 Scope analysis:', {
+      grantedScopes,
+      hasWriteScope,
+      requestedScopes: ['tweet.read', 'tweet.write', 'users.read', 'offline.access'],
+    });
+    
+    if (!hasWriteScope) {
+      console.warn('⚠️ WARNING: Twitter did NOT grant tweet.write scope! Posts will fail.');
+    }
+
     // Fetch user profile with retry logic for rate limits
     console.log('Fetching Twitter user profile with access token...');
     
