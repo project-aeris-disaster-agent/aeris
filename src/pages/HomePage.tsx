@@ -430,7 +430,7 @@ export function HomePage() {
       </header>
 
       {/* Main Content */}
-      <main className="relative z-10 p-4 sm:p-6 pb-24">
+      <main className="relative z-10 p-4 sm:p-6 pb-40">
         <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-4 lg:gap-6">
           
           {/* Left Panel - Profile & Controls */}
@@ -611,7 +611,7 @@ export function HomePage() {
           </div>
 
           {/* Center Panel - Chat Interface */}
-          <div className={`flex-1 min-w-0 order-last lg:order-none ${!hasAlterEgo ? 'feature-disabled' : ''}`}>
+          <div className={`flex-1 min-w-0 order-2 lg:order-none ${!hasAlterEgo ? 'feature-disabled' : ''}`}>
             <div className="flex flex-col h-[500px] lg:h-[600px] bg-black/40 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden">
               {/* Chat Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/30">
@@ -707,18 +707,20 @@ export function HomePage() {
             
             {/* Automation Button - Below Chat Window */}
             {hasAlterEgo && characterCard && sessionId && (
-              <AutomationDropdown
-                userId={user?.id || ''}
-                characterCard={characterCard}
-                conversationHistory={messages}
-                sessionId={sessionId}
-                connectedPlatforms={socialAutomation}
-              />
+              <div className="mt-3 mb-24">
+                <AutomationDropdown
+                  userId={user?.id || ''}
+                  characterCard={characterCard}
+                  conversationHistory={messages}
+                  sessionId={sessionId}
+                  connectedPlatforms={socialAutomation}
+                />
+              </div>
             )}
           </div>
 
           {/* Right Panel - Social Media Automation */}
-          <div className={`w-full lg:w-72 flex-shrink-0 order-2 lg:order-last ${!hasAlterEgo ? 'feature-disabled' : ''}`}>
+          <div className={`w-full lg:w-72 flex-shrink-0 order-last lg:order-last ${!hasAlterEgo ? 'feature-disabled' : ''}`}>
             <div className="bg-black/40 backdrop-blur-xl rounded-2xl border border-white/10 p-4">
               <h3 className="text-white font-bold mb-4 flex items-center gap-2 text-sm">
                 <Zap className="w-4 h-4 text-yellow-400" />

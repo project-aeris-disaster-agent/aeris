@@ -242,12 +242,11 @@ export function AutomationDropdown({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="absolute left-0 right-0 z-50 overflow-hidden
-              bottom-full mb-2 
-              lg:bottom-auto lg:top-full lg:mt-2"
+            className="fixed inset-x-4 bottom-24 z-50 overflow-hidden
+              lg:absolute lg:inset-auto lg:left-0 lg:right-0 lg:bottom-full lg:mb-2 lg:top-auto lg:mt-2"
             style={{
-              // Simple, reliable calculation: viewport height - footer (80px) - margins (20px)
-              maxHeight: `calc(100vh - 100px)`,
+              // Keep panel above footer on mobile; roomy on desktop
+              maxHeight: 'calc(100vh - 140px)',
             }}
           >
             {/* Premium Gold Border Container */}
