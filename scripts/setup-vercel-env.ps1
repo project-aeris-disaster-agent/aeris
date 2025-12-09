@@ -107,17 +107,29 @@ foreach ($envVar in $envVars) {
     foreach ($env in $environments) {
         Write-Host "  Setting for $env..." -ForegroundColor Gray
         try {
-            # Vercel CLI env add is interactive, so we pipe the value
+            # Try to add the variable
             $value | vercel env add $envVar.Name $env 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
-                Write-Host "  ✅ Set for $env" -ForegroundColor Green
+                Write-Host "  ✅ Added for $env" -ForegroundColor Green
             } else {
-                Write-Host "  ⚠️  May already exist for $env, trying to update..." -ForegroundColor Yellow
-                # Try to remove and re-add, or use update if available
+                # Variable may already exist, try to remove and re-add
+                Write-Host "    Variable exists, removing..." -ForegroundColor Yellow
+                vercel env rm $envVar.Name $env --yes 2>&1 | Out-Null
+                
+                # Wait a moment
+                Start-Sleep -Milliseconds 1000
+                
+                # Try to add again
                 $value | vercel env add $envVar.Name $env 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  ✅ Updated for $env" -ForegroundColor Green
+                } else {
+                    Write-Host "  ⚠️  Could not update for $env" -ForegroundColor Yellow
+                    Write-Host "  💡 You may need to manually update this variable in Vercel dashboard" -ForegroundColor Gray
+                }
             }
         } catch {
-            Write-Host "  ❌ Failed to set for $env" -ForegroundColor Red
+            Write-Host "  ❌ Failed to set for $env: $_" -ForegroundColor Red
         }
     }
 }

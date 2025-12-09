@@ -28,15 +28,62 @@ function question(query) {
 
 function execCommand(command, options = {}) {
   try {
-    return execSync(command, { 
+    const result = execSync(command, { 
       encoding: 'utf-8', 
-      stdio: 'inherit',
+      stdio: options.stdio || 'pipe',
       ...options 
     });
+    return { success: true, output: result };
   } catch (error) {
-    console.error(`Error executing: ${command}`);
-    throw error;
+    const errorOutput = error.stderr?.toString() || error.stdout?.toString() || error.message || '';
+    if (options.stdio === 'inherit') {
+      // If stdio is inherit, error is already shown, but we still need to throw
+      throw error;
+    }
+    return { success: false, error: errorOutput, code: error.status || error.code };
   }
+}
+
+async function setEnvVar(name, value, env) {
+  // Escape value for shell command (handle special characters)
+  const escapedValue = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+  const command = `echo "${escapedValue}" | vercel env add ${name} ${env}`;
+  
+  const result = execCommand(command, { stdio: 'pipe' });
+  
+  if (result.success) {
+    return { success: true, message: 'Added' };
+  }
+  
+  const errorOutput = result.error || '';
+  
+  // Check if variable already exists
+  if (errorOutput.includes('already exists') || errorOutput.includes('has already been added')) {
+    try {
+      // Remove existing variable first (use --yes flag for non-interactive)
+      const removeResult = execCommand(`vercel env rm ${name} ${env} --yes`, { stdio: 'pipe' });
+      
+      if (!removeResult.success && !removeResult.error.includes('not found')) {
+        return { success: false, message: `Could not remove existing variable: ${removeResult.error}` };
+      }
+      
+      // Wait a moment for removal to complete
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Try to add again
+      const addResult = execCommand(command, { stdio: 'pipe' });
+      
+      if (addResult.success) {
+        return { success: true, message: 'Updated (removed and re-added)' };
+      } else {
+        return { success: false, message: `Could not re-add after removal: ${addResult.error}` };
+      }
+    } catch (removeError) {
+      return { success: false, message: `Error during update: ${removeError.message || 'Unknown error'}` };
+    }
+  }
+  
+  return { success: false, message: errorOutput || 'Unknown error' };
 }
 
 // Environment variables to set
@@ -132,22 +179,14 @@ async function setupEnvVars() {
 
     // Set for each environment
     for (const env of environments) {
-      try {
-        console.log(`  Setting for ${env}...`);
-        // Use echo to pipe value into vercel env add
-        // Note: vercel env add is interactive, so we need to use a workaround
-        const command = `echo "${value}" | vercel env add ${envVar.name} ${env}`;
-        execCommand(command);
-        console.log(`  ✅ Set for ${env}`);
-      } catch (error) {
-        console.log(`  ⚠️  Failed to set for ${env} (may already exist)`);
-        // Try to update with --upsert if available
-        try {
-          execCommand(`echo "${value}" | vercel env add ${envVar.name} ${env} --upsert`);
-          console.log(`  ✅ Updated for ${env}`);
-        } catch (updateError) {
-          console.log(`  ❌ Could not update for ${env}`);
-        }
+      console.log(`  Setting for ${env}...`);
+      const result = await setEnvVar(envVar.name, value, env);
+      
+      if (result.success) {
+        console.log(`  ✅ ${result.message} for ${env}`);
+      } else {
+        console.log(`  ⚠️  Failed for ${env}: ${result.message}`);
+        console.log(`  💡 You may need to manually update this variable in Vercel dashboard`);
       }
     }
   }
