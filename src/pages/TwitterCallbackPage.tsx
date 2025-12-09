@@ -97,7 +97,12 @@ export function TwitterCallbackPage() {
 
         // Exchange code for tokens via Supabase Edge Function
         // The Edge Function also fetches user profile (avoids CORS issues)
-        const redirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI || `${window.location.origin}/auth/twitter/callback`;
+        // Clean the redirect URI (remove quotes and whitespace)
+        const rawRedirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI;
+        const cleanedRedirectUri = rawRedirectUri 
+          ? rawRedirectUri.trim().replace(/^["']|["']$/g, '').trim()
+          : undefined;
+        const redirectUri = cleanedRedirectUri || `${window.location.origin}/auth/twitter/callback`;
         const tokenData = await exchangeCodeForTokens(code, codeVerifier, redirectUri);
         
         // Check for error from Edge Function

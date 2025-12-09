@@ -179,14 +179,33 @@ export class TwitterOAuthService {
 // Singleton instance
 let twitterOAuthInstance: TwitterOAuthService | null = null;
 
+// Helper function to clean environment variable values
+function cleanEnvValue(value: string | undefined): string | undefined {
+  if (!value || typeof value !== 'string') return undefined;
+  // Remove quotes (both single and double) from start and end
+  // Remove any whitespace/newlines
+  return value.trim().replace(/^["']|["']$/g, '').trim();
+}
+
 export function getTwitterOAuthService(): TwitterOAuthService {
   if (!twitterOAuthInstance) {
-    const clientId = import.meta.env.VITE_TWITTER_CLIENT_ID;
-    // Always use the environment variable if set, otherwise fall back to current origin
-    // This ensures the redirect URI matches what's configured in Twitter Developer Portal
-    const redirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI || `${window.location.origin}/auth/twitter/callback`;
-    // Always include tweet.write for posting functionality
-    const envScopes = import.meta.env.VITE_TWITTER_SCOPES?.split(',').map((s: string) => s.trim()) || [];
+    // Get and clean environment variables (remove quotes and whitespace)
+    const rawClientId = import.meta.env.VITE_TWITTER_CLIENT_ID;
+    const rawRedirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI;
+    const rawScopes = import.meta.env.VITE_TWITTER_SCOPES;
+
+    const clientId = cleanEnvValue(rawClientId);
+    const redirectUri = cleanEnvValue(rawRedirectUri) || `${window.location.origin}/auth/twitter/callback`;
+    
+    // Parse and clean scopes
+    let envScopes: string[] = [];
+    if (rawScopes) {
+      const cleanedScopes = cleanEnvValue(rawScopes);
+      if (cleanedScopes) {
+        envScopes = cleanedScopes.split(',').map((s: string) => s.trim()).filter(Boolean);
+      }
+    }
+    
     const defaultScopes = ['tweet.read', 'tweet.write', 'users.read', 'offline.access'];
     // Merge env scopes with defaults, ensuring tweet.write is always included
     const scopes = [...new Set([...envScopes, ...defaultScopes])];
@@ -201,7 +220,9 @@ export function getTwitterOAuthService(): TwitterOAuthService {
       redirectUri,
       scopes,
       currentOrigin: window.location.origin,
-      hasEnvRedirectUri: !!import.meta.env.VITE_TWITTER_REDIRECT_URI,
+      hasEnvRedirectUri: !!rawRedirectUri,
+      rawClientIdLength: rawClientId?.length || 0,
+      cleanedClientIdLength: clientId?.length || 0,
     });
 
     twitterOAuthInstance = new TwitterOAuthService({
