@@ -186,7 +186,7 @@ export function getTwitterOAuthService(): TwitterOAuthService {
     // This ensures the redirect URI matches what's configured in Twitter Developer Portal
     const redirectUri = import.meta.env.VITE_TWITTER_REDIRECT_URI || `${window.location.origin}/auth/twitter/callback`;
     // Always include tweet.write for posting functionality
-    const envScopes = import.meta.env.VITE_TWITTER_SCOPES?.split(',').map(s => s.trim()) || [];
+    const envScopes = import.meta.env.VITE_TWITTER_SCOPES?.split(',').map((s: string) => s.trim()) || [];
     const defaultScopes = ['tweet.read', 'tweet.write', 'users.read', 'offline.access'];
     // Merge env scopes with defaults, ensuring tweet.write is always included
     const scopes = [...new Set([...envScopes, ...defaultScopes])];
