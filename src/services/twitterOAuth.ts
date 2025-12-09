@@ -86,7 +86,7 @@ export class TwitterOAuthService {
       response_type: 'code',
       client_id: this.config.clientId,
       redirect_uri: this.config.redirectUri,
-      scope: (this.config.scopes || ['tweet.read', 'users.read', 'offline.access']).join(' '),
+      scope: (this.config.scopes || ['tweet.read', 'tweet.write', 'users.read', 'offline.access']).join(' '),
       state: state,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
@@ -206,9 +206,9 @@ export function getTwitterOAuthService(): TwitterOAuthService {
       }
     }
     
-    // Use read-only scopes by default (tweet.write requires app permissions in Twitter Developer Portal)
-    // To enable tweet.write: Go to Twitter Developer Portal → Your App → Settings → User authentication settings → App permissions → Read and Write
-    const defaultScopes = ['tweet.read', 'users.read', 'offline.access'];
+    // Include tweet.write for posting capability
+    // Requires: Twitter Developer Portal → Your App → Settings → User authentication settings → App permissions → Read and Write
+    const defaultScopes = ['tweet.read', 'tweet.write', 'users.read', 'offline.access'];
     const scopes = [...new Set([...envScopes, ...defaultScopes])];
 
     if (!clientId) {
