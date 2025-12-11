@@ -178,6 +178,15 @@ export function HomePage() {
     fetchUserData();
   }, [user?.id]);
 
+  // Automatically enable Twitter toggle if user has successfully logged in with Twitter
+  useEffect(() => {
+    if (userProfile?.twitter_access_token) {
+      setSocialAutomation(prev => ({ ...prev, twitter: true }));
+    } else {
+      setSocialAutomation(prev => ({ ...prev, twitter: false }));
+    }
+  }, [userProfile?.twitter_access_token]);
+
   // Initialize chat session when user has a character card
   useEffect(() => {
     async function initChatSession() {
@@ -745,35 +754,35 @@ export function HomePage() {
                 </label>
                 
                 {/* Farcaster */}
-                <label className="flex items-center gap-3 p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition-colors">
+                <label className="flex items-center gap-3 p-3 bg-white/5 rounded-xl cursor-not-allowed opacity-50 transition-colors">
                   <input
                     type="checkbox"
-                    checked={socialAutomation.farcaster}
-                    onChange={(e) => setSocialAutomation(prev => ({ ...prev, farcaster: e.target.checked }))}
+                    checked={false}
+                    disabled
                     className="sr-only"
                   />
-                  <div className={`w-9 h-5 rounded-full relative transition-colors ${socialAutomation.farcaster ? 'bg-gradient-to-r from-pink-600 to-cyan-500' : 'bg-white/10'}`}>
-                    <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-lg transition-transform ${socialAutomation.farcaster ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                  <div className="w-9 h-5 rounded-full relative transition-colors bg-white/10">
+                    <div className="absolute top-0.5 w-4 h-4 bg-white/30 rounded-full shadow-lg transition-transform translate-x-0.5" />
                   </div>
-                  <FarcasterIcon className="w-4 h-4 text-purple-400" />
-                  <span className="text-white/80 text-sm flex-1">Farcaster</span>
-                  {socialAutomation.farcaster && <span className="text-xs text-green-400">Active</span>}
+                  <FarcasterIcon className="w-4 h-4 text-purple-400/50" />
+                  <span className="text-white/60 text-sm flex-1">Farcaster</span>
+                  <span className="text-xs text-white/40">Coming soon</span>
                 </label>
                 
                 {/* BASEapp */}
-                <label className="flex items-center gap-3 p-3 bg-white/5 rounded-xl cursor-pointer hover:bg-white/10 transition-colors">
+                <label className="flex items-center gap-3 p-3 bg-white/5 rounded-xl cursor-not-allowed opacity-50 transition-colors">
                   <input
                     type="checkbox"
-                    checked={socialAutomation.baseapp}
-                    onChange={(e) => setSocialAutomation(prev => ({ ...prev, baseapp: e.target.checked }))}
+                    checked={false}
+                    disabled
                     className="sr-only"
                   />
-                  <div className={`w-9 h-5 rounded-full relative transition-colors ${socialAutomation.baseapp ? 'bg-gradient-to-r from-pink-600 to-cyan-500' : 'bg-white/10'}`}>
-                    <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-lg transition-transform ${socialAutomation.baseapp ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                  <div className="w-9 h-5 rounded-full relative transition-colors bg-white/10">
+                    <div className="absolute top-0.5 w-4 h-4 bg-white/30 rounded-full shadow-lg transition-transform translate-x-0.5" />
                   </div>
-                  <BaseIcon className="w-4 h-4 text-blue-500" />
-                  <span className="text-white/80 text-sm flex-1">BASEapp</span>
-                  {socialAutomation.baseapp && <span className="text-xs text-green-400">Active</span>}
+                  <BaseIcon className="w-4 h-4 text-blue-500/50" />
+                  <span className="text-white/60 text-sm flex-1">BASEapp</span>
+                  <span className="text-xs text-white/40">Coming soon</span>
                 </label>
               </div>
               
