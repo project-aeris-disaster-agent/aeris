@@ -64,8 +64,28 @@ export class TwitterOAuthService {
     codeVerifier: string;
     state: string;
   }> {
+    // Check if there's already an active OAuth flow to prevent loops
+    const activeFlowId = sessionStorage.getItem('twitter_oauth_active_flow');
+    const activeFlowTimestamp = sessionStorage.getItem('twitter_oauth_active_flow_timestamp');
+    
+    if (activeFlowId && activeFlowTimestamp) {
+      const age = Date.now() - parseInt(activeFlowTimestamp, 10);
+      // If flow is less than 30 seconds old, prevent starting a new one
+      if (age < 30000) {
+        console.warn('⚠️ Active OAuth flow detected, preventing duplicate initiation');
+        throw new Error('An OAuth flow is already in progress. Please wait a moment and try again.');
+      } else {
+        // Clear stale flow
+        sessionStorage.removeItem('twitter_oauth_active_flow');
+        sessionStorage.removeItem('twitter_oauth_active_flow_timestamp');
+      }
+    }
+
     const { codeVerifier, codeChallenge } = await this.generatePKCE();
     const state = this.generateState();
+
+    // Generate unique flow ID to track this specific OAuth attempt
+    const flowId = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
     // Store code verifier and state in localStorage for better persistence across redirects
     // Also store timestamp to allow cleanup of old entries
@@ -74,6 +94,10 @@ export class TwitterOAuthService {
     localStorage.setItem('twitter_state', state);
     localStorage.setItem('twitter_oauth_timestamp', timestamp);
     
+    // Store active flow in sessionStorage (cleared on tab close, more reliable on mobile)
+    sessionStorage.setItem('twitter_oauth_active_flow', flowId);
+    sessionStorage.setItem('twitter_oauth_active_flow_timestamp', timestamp);
+    
     // Debug logging for production to help diagnose OAuth issues
     console.log('🔐 Twitter OAuth state stored:', {
       state: state.substring(0, 10) + '...',
@@ -81,6 +105,17 @@ export class TwitterOAuthService {
       redirectUri: this.config.redirectUri,
       origin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
     });
+
+    // Validate redirect URI format before using it
+    try {
+      const redirectUriObj = new URL(this.config.redirectUri);
+      if (redirectUriObj.protocol !== 'https:' && redirectUriObj.protocol !== 'http:') {
+        throw new Error(`Invalid redirect URI protocol: ${redirectUriObj.protocol}`);
+      }
+    } catch (e) {
+      console.error('❌ Invalid redirect URI:', this.config.redirectUri, e);
+      throw new Error(`Invalid redirect URI format: ${this.config.redirectUri}. Please check your VITE_TWITTER_REDIRECT_URI environment variable.`);
+    }
 
     const params = new URLSearchParams({
       response_type: 'code',
@@ -95,6 +130,14 @@ export class TwitterOAuthService {
     });
 
     const url = `https://twitter.com/i/oauth2/authorize?${params.toString()}`;
+    
+    // Log the exact redirect URI being used for debugging
+    console.log('🔗 Twitter OAuth URL generated:', {
+      redirectUri: this.config.redirectUri,
+      redirectUriLength: this.config.redirectUri.length,
+      hasTrailingSlash: this.config.redirectUri.endsWith('/'),
+      clientIdPrefix: this.config.clientId.substring(0, 10) + '...',
+    });
 
     // Debug logging (remove in production)
     if (import.meta.env.DEV) {
@@ -161,6 +204,9 @@ export class TwitterOAuthService {
     localStorage.removeItem('twitter_code_verifier');
     localStorage.removeItem('twitter_state');
     localStorage.removeItem('twitter_oauth_timestamp');
+    // Also clear sessionStorage flow tracking
+    sessionStorage.removeItem('twitter_oauth_active_flow');
+    sessionStorage.removeItem('twitter_oauth_active_flow_timestamp');
   }
 
   /**

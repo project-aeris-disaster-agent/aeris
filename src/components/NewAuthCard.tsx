@@ -121,13 +121,37 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
   };
 
   const handleTwitterSignIn = async () => {
+    // Prevent multiple clicks/rapid fire
+    if (isTwitterLoading) {
+      console.log('Twitter OAuth already in progress, ignoring click');
+      return;
+    }
+
+    // Check if we're already on the callback page (shouldn't happen, but safety check)
+    if (window.location.pathname.includes('/twitter/callback')) {
+      console.warn('Already on Twitter callback page, aborting OAuth initiation');
+      return;
+    }
+
     try {
       setIsTwitterLoading(true);
       const oauthService = getTwitterOAuthService();
+      
+      // Check if there's already an OAuth flow in progress (stored state exists)
+      const existingState = oauthService.getStoredState();
+      if (existingState) {
+        console.warn('⚠️ Existing OAuth flow detected. Clearing old state before starting new flow.');
+        oauthService.clearStoredData();
+      }
+      
       const { url } = await oauthService.getAuthorizationUrl();
       
-      // Redirect to Twitter OAuth
-      window.location.href = url;
+      // Small delay to ensure state is saved before redirect
+      await new Promise(resolve => setTimeout(resolve, 150));
+      
+      // Use replace() instead of href to prevent back button issues and potential loops on mobile
+      // This also prevents the page from being added to browser history
+      window.location.replace(url);
     } catch (error) {
       console.error('Twitter sign-in error:', error);
       setIsTwitterLoading(false);

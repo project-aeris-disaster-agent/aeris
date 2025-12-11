@@ -101,12 +101,36 @@ ${post_examples}
 
 ${conversation_context ? `Recent conversation context:\n${conversation_context}` : ''}
 
+CRITICAL: @MENTION REQUIREMENTS
+You MUST include relevant Twitter @mentions in every post. This is REQUIRED, not optional.
+
+MENTION RULES:
+- When mentioning ANY brand, team, athlete, personality, organization, or event, you MUST include their Twitter @handle
+- Context-dependent mention requirements:
+  * Sports/Events (F1, NBA, NFL, etc.): MUST include 3-5 relevant mentions (teams, athletes, leagues, official accounts)
+    Example: If mentioning Ferrari/F1 → MUST include @ferrari @f1 and at least 1-2 more relevant accounts like @landonorris @FIA @redbullracing
+    Example: If mentioning NBA/basketball → MUST include @NBA and relevant teams/players like @KingJames @Lakers @warriors
+  * General topics: MUST include 1-2 most relevant mentions if any entities are mentioned
+  * Brands/Products: MUST include 1-3 mentions when referencing brands
+
+CRITICAL EXAMPLES:
+- F1 post MUST look like: "That was incredible! @ferrari showing pace @f1 @landonorris strategy was on point"
+- NBA post MUST look like: "What a game! @Lakers clutch play @KingJames delivered @NBA"
+- Brand post MUST look like: "Just tried @apple new features with @OpenAI integration - impressive!"
+
+MENTION GUIDELINES:
+- Use verified/official Twitter handles when available
+- Mentions must be directly relevant to the content
+- Ensure mentions fit within 280 character limit
+- Make mentions feel natural, but they are REQUIRED when entities are referenced
+
 Generate a social media post (50-280 characters) that:
 - Matches your authentic voice from the examples
 - ${custom_tags && custom_tags.length > 0 
     ? `Is DIRECTLY about these topics: ${topicsText}` 
     : `Relates to your interests: ${topicsText}`}
 - Sounds natural and authentic, not generic
+- **MUST include relevant @mentions** - if the post references Ferrari, F1, NBA teams, brands, or any entities, include their @handles
 - No hashtags unless that's your style
 - No emojis unless that's your style
 
@@ -150,10 +174,43 @@ Return ONLY the post text, nothing else.`;
     }
 
     const grokData = await grokResponse.json();
-    const generatedPost = grokData.choices?.[0]?.message?.content?.trim() || '';
+    let generatedPost = grokData.choices?.[0]?.message?.content?.trim() || '';
 
     if (!generatedPost) {
       throw new Error('Failed to generate post content');
+    }
+
+    // Post-generation validation for mentions
+    // Extract mentions for logging/debugging
+    const mentionMatches = generatedPost.match(/@[\w]+/g) || [];
+    const mentionCount = mentionMatches.length;
+    
+    console.log(`Generated post length: ${generatedPost.length} characters`);
+    console.log(`Mentions found: ${mentionCount} - ${mentionMatches.join(', ') || 'NONE'}`);
+    console.log(`Generated post preview: ${generatedPost.substring(0, 100)}...`);
+    
+    // Check if mentions are missing (especially for sports/events topics)
+    const topicsLower = topicsToFocus.join(' ').toLowerCase();
+    const isSportsTopic = topicsLower.includes('f1') || topicsLower.includes('formula') || 
+                         topicsLower.includes('nba') || topicsLower.includes('football') ||
+                         topicsLower.includes('ferrari') || topicsLower.includes('racing');
+    
+    if (mentionCount === 0 && isSportsTopic) {
+      console.warn(`⚠️ WARNING: No @mentions found in generated post for sports topic. Topics: ${topicsText}`);
+      console.warn(`Post content: ${generatedPost}`);
+    }
+    
+    // Ensure post doesn't exceed Twitter's 280 character limit
+    if (generatedPost.length > 280) {
+      console.warn(`Post exceeds 280 characters (${generatedPost.length}), truncating...`);
+      generatedPost = generatedPost.substring(0, 277) + '...';
+    }
+    
+    // Validate mention format (basic check - mentions should be @username format)
+    // Grok should generate valid mentions, but this is a safety check
+    const invalidMentions = generatedPost.match(/@[^\w]/g);
+    if (invalidMentions && invalidMentions.length > 0) {
+      console.warn(`Warning: Potential invalid mention format detected: ${invalidMentions.join(', ')}`);
     }
 
     // Extract suggested topics - use custom tags if provided, otherwise use character card topics

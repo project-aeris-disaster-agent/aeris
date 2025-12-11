@@ -1,5 +1,5 @@
 // src/pages/TwitterCallbackPage.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getTwitterOAuthService } from '@/services/twitterOAuth';
 import { exchangeCodeForTokens } from '@/services/twitterApi';
@@ -14,8 +14,81 @@ export function TwitterCallbackPage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState('');
+  
+  // Prevent multiple executions on mobile browsers
+  const hasProcessedRef = useRef(false);
+  const isProcessingRef = useRef(false);
 
   useEffect(() => {
+    // Early validation - if we don't have code or error, don't process
+    const code = searchParams.get('code');
+    const error = searchParams.get('error');
+    const state = searchParams.get('state');
+    
+    // Safety check: if we're somehow on Twitter's domain, don't process
+    if (window.location.hostname.includes('twitter.com') || window.location.hostname.includes('x.com')) {
+      console.error('❌ Callback page loaded on Twitter domain - this should not happen');
+      return;
+    }
+    
+    // Check for redirect loop - if we've been redirected here multiple times quickly
+    const redirectCount = sessionStorage.getItem('twitter_callback_redirect_count');
+    const redirectTimestamp = sessionStorage.getItem('twitter_callback_redirect_timestamp');
+    
+    if (redirectCount && redirectTimestamp) {
+      const age = Date.now() - parseInt(redirectTimestamp, 10);
+      const count = parseInt(redirectCount, 10);
+      
+      // If we've been redirected here 3+ times in less than 5 seconds, we're in a loop
+      if (count >= 3 && age < 5000) {
+        console.error('❌ Redirect loop detected! Clearing OAuth state and redirecting to auth page.');
+        const oauthService = getTwitterOAuthService();
+        oauthService.clearStoredData();
+        sessionStorage.removeItem('twitter_callback_redirect_count');
+        sessionStorage.removeItem('twitter_callback_redirect_timestamp');
+        setStatus('error');
+        setMessage('OAuth redirect loop detected. Please try signing in again.');
+        navigate('/auth', { replace: true });
+        return;
+      }
+      
+      // Increment count if within 10 seconds
+      if (age < 10000) {
+        sessionStorage.setItem('twitter_callback_redirect_count', (count + 1).toString());
+      } else {
+        // Reset if older than 10 seconds
+        sessionStorage.setItem('twitter_callback_redirect_count', '1');
+        sessionStorage.setItem('twitter_callback_redirect_timestamp', Date.now().toString());
+      }
+    } else {
+      // First time, initialize
+      sessionStorage.setItem('twitter_callback_redirect_count', '1');
+      sessionStorage.setItem('twitter_callback_redirect_timestamp', Date.now().toString());
+    }
+    
+    // If no code and no error, this might be an initial load or invalid redirect
+    if (!code && !error) {
+      console.warn('⚠️ No OAuth parameters found in URL. This might be a direct navigation to the callback page.');
+      // Show error after a short delay to allow for potential redirect
+      const timeoutId = setTimeout(() => {
+        if (!hasProcessedRef.current) {
+          setStatus('error');
+          setMessage('Invalid OAuth callback. Please try signing in again.');
+          setTimeout(() => navigate('/auth', { replace: true }), 3000);
+        }
+      }, 2000);
+      return () => clearTimeout(timeoutId);
+    }
+
+    // Prevent multiple executions
+    if (hasProcessedRef.current || isProcessingRef.current) {
+      console.log('⚠️ Callback already processed or processing, skipping...');
+      return;
+    }
+
+    // Mark as processing immediately
+    isProcessingRef.current = true;
+
     const handleCallback = async () => {
       try {
         const oauthService = getTwitterOAuthService();
@@ -25,9 +98,13 @@ export function TwitterCallbackPage() {
 
         // Check for error from Twitter
         if (error) {
+          // Clear OAuth state on error to prevent loops
+          oauthService.clearStoredData();
+          sessionStorage.removeItem('twitter_callback_redirect_count');
+          sessionStorage.removeItem('twitter_callback_redirect_timestamp');
           setStatus('error');
           setMessage(`Twitter authorization failed: ${error}`);
-          setTimeout(() => navigate('/auth'), 3000);
+          setTimeout(() => navigate('/auth', { replace: true }), 3000);
           return;
         }
 
@@ -134,8 +211,15 @@ export function TwitterCallbackPage() {
           throw new Error('Failed to create account. The server could not create your user account. Please try again or contact support.');
         }
 
-        // Clear stored OAuth data
+        // Clear stored OAuth data immediately to prevent reuse
         oauthService.clearStoredData();
+        
+        // Clear redirect loop tracking on success
+        sessionStorage.removeItem('twitter_callback_redirect_count');
+        sessionStorage.removeItem('twitter_callback_redirect_timestamp');
+        
+        // Mark as processed to prevent re-execution
+        hasProcessedRef.current = true;
 
         // Edge Function creates/finds user with admin privileges (bypasses email validation)
         let user;
@@ -201,13 +285,27 @@ export function TwitterCallbackPage() {
 
       } catch (error) {
         console.error('Twitter callback error:', error);
+        // Mark as processed even on error to prevent retry loops
+        hasProcessedRef.current = true;
         setStatus('error');
         setMessage(error instanceof Error ? error.message : 'An error occurred during authentication');
         setTimeout(() => navigate('/auth'), 3000);
+      } finally {
+        // Always clear processing flag
+        isProcessingRef.current = false;
       }
     };
 
     handleCallback();
+    
+    // Cleanup function to reset processing flag if component unmounts
+    return () => {
+      // Don't reset hasProcessedRef - we want to prevent re-processing
+      // Only reset isProcessingRef if we're still processing
+      if (isProcessingRef.current && !hasProcessedRef.current) {
+        isProcessingRef.current = false;
+      }
+    };
   }, [searchParams, navigate]);
 
   return (
