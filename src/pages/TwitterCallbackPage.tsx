@@ -23,7 +23,6 @@ export function TwitterCallbackPage() {
     // Early validation - if we don't have code or error, don't process
     const code = searchParams.get('code');
     const error = searchParams.get('error');
-    const _state = searchParams.get('state'); // Used for validation in stored state check
     
     // Safety check: if we're somehow on Twitter's domain, don't process
     if (window.location.hostname.includes('twitter.com') || window.location.hostname.includes('x.com')) {
