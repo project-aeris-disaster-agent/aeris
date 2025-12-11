@@ -2,7 +2,7 @@
 // Uses character card and conversation history to generate authentic posts
 
 import { supabase } from '@/lib/supabase';
-import type { ElizaOSCharacterCard, ScheduledPostsInsert } from '@/types/database';
+import type { ElizaOSCharacterCard, ScheduledPostsInsert, ScheduledPostType } from '@/types/database';
 import type { ChatMessage } from './chatService';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -116,7 +116,8 @@ export async function schedulePost(
   content: string,
   scheduledFor: Date,
   platforms: string[],
-  postType: 'tweet' | 'reply' | 'thread' = 'tweet'
+  postType: ScheduledPostType = 'tweet',
+  targetTweetId?: string
 ): Promise<string> {
   const posts: ScheduledPostsInsert[] = platforms.map(platform => ({
     user_id: userId,
@@ -126,6 +127,7 @@ export async function schedulePost(
     posted_at: null,
     status: 'pending',
     error_message: null,
+    target_tweet_id: targetTweetId || null,
     post_metadata: {
       platform,
       generated_by: 'ai',
@@ -145,6 +147,137 @@ export async function schedulePost(
   }
 
   return data.id;
+}
+
+/**
+ * Schedule a retweet action
+ * @param userId - The user's ID
+ * @param targetTweetId - The tweet ID to retweet
+ * @param scheduledFor - When to execute the retweet
+ * @param platform - The platform (default: 'twitter')
+ */
+export async function scheduleRetweet(
+  userId: string,
+  targetTweetId: string,
+  scheduledFor: Date,
+  platform: string = 'twitter'
+): Promise<string> {
+  return schedulePost(
+    userId,
+    '', // No content needed for retweets
+    scheduledFor,
+    [platform],
+    'retweet',
+    targetTweetId
+  );
+}
+
+/**
+ * Schedule a like action
+ * @param userId - The user's ID
+ * @param targetTweetId - The tweet ID to like
+ * @param scheduledFor - When to execute the like
+ * @param platform - The platform (default: 'twitter')
+ */
+export async function scheduleLike(
+  userId: string,
+  targetTweetId: string,
+  scheduledFor: Date,
+  platform: string = 'twitter'
+): Promise<string> {
+  return schedulePost(
+    userId,
+    '', // No content needed for likes
+    scheduledFor,
+    [platform],
+    'like',
+    targetTweetId
+  );
+}
+
+/**
+ * Schedule a comment/reply action
+ * @param userId - The user's ID
+ * @param targetTweetId - The tweet ID to reply to
+ * @param content - The reply content
+ * @param scheduledFor - When to execute the reply
+ * @param platform - The platform (default: 'twitter')
+ */
+export async function scheduleComment(
+  userId: string,
+  targetTweetId: string,
+  content: string,
+  scheduledFor: Date,
+  platform: string = 'twitter'
+): Promise<string> {
+  return schedulePost(
+    userId,
+    content,
+    scheduledFor,
+    [platform],
+    'comment',
+    targetTweetId
+  );
+}
+
+/**
+ * Schedule multiple engagement actions at once (for bulk operations)
+ * @param userId - The user's ID
+ * @param actions - Array of actions to schedule
+ */
+export async function scheduleEngagementActions(
+  userId: string,
+  actions: Array<{
+    type: 'retweet' | 'like' | 'comment';
+    targetTweetId: string;
+    content?: string;
+    scheduledFor: Date;
+    platform?: string;
+  }>
+): Promise<string[]> {
+  const results: string[] = [];
+
+  for (const action of actions) {
+    try {
+      let id: string;
+      switch (action.type) {
+        case 'retweet':
+          id = await scheduleRetweet(
+            userId,
+            action.targetTweetId,
+            action.scheduledFor,
+            action.platform
+          );
+          break;
+        case 'like':
+          id = await scheduleLike(
+            userId,
+            action.targetTweetId,
+            action.scheduledFor,
+            action.platform
+          );
+          break;
+        case 'comment':
+          if (!action.content) {
+            throw new Error('Content is required for comment actions');
+          }
+          id = await scheduleComment(
+            userId,
+            action.targetTweetId,
+            action.content,
+            action.scheduledFor,
+            action.platform
+          );
+          break;
+      }
+      results.push(id);
+    } catch (error) {
+      console.error(`Failed to schedule ${action.type} action:`, error);
+      // Continue with other actions even if one fails
+    }
+  }
+
+  return results;
 }
 
 /**

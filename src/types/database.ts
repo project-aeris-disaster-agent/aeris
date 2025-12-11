@@ -160,16 +160,20 @@ export type AgentSessionsInsert = Omit<AgentSessionsRow, 'id' | 'started_at'>;
 export type AgentSessionsUpdate = Partial<Omit<AgentSessionsRow, 'id' | 'started_at'>>;
 
 // Scheduled Posts types
+// Supports: tweet, reply, thread (content posts) + retweet, like, comment (engagement actions)
+export type ScheduledPostType = 'tweet' | 'reply' | 'thread' | 'retweet' | 'like' | 'comment';
+
 export type ScheduledPostsRow = {
   id: string;
   user_id: string;
   content: string;
-  post_type: 'tweet' | 'reply' | 'thread';
+  post_type: ScheduledPostType;
   scheduled_for: string;
   posted_at: string | null;
   status: 'pending' | 'posted' | 'failed' | 'cancelled';
   error_message: string | null;
   post_metadata: Record<string, any>;
+  target_tweet_id: string | null; // For engagement actions (retweet, like, comment)
   created_at: string;
 };
 
