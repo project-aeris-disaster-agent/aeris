@@ -13,7 +13,7 @@
   "crons": [
     {
       "path": "/api/cron/process-posts",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 9 * * *"
     }
   ]
 }
