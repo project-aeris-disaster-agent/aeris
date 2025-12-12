@@ -254,7 +254,13 @@ export async function updateActionSettings(
   userId: string,
   actions: Partial<AgentSettings['actions']>
 ): Promise<AgentSettings> {
-  return updateAgentSettings(userId, { actions });
+  // Get current settings to merge
+  const currentSettings = await getAgentSettings(userId);
+  const mergedActions = {
+    ...currentSettings.actions,
+    ...actions,
+  };
+  return updateAgentSettings(userId, { actions: mergedActions });
 }
 
 /**

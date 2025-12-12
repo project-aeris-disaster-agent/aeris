@@ -13,8 +13,8 @@ import {
   getOrCreateSession, 
   getSessionMessages
 } from '@/services/chatService';
-import type { ElizaOSCharacterCard, ProfileScores, LetterGrade, AgentSettings } from '@/types/database';
-import { getAgentSettings, DEFAULT_AGENT_SETTINGS } from '@/services/agentService';
+import type { ElizaOSCharacterCard, ProfileScores, LetterGrade } from '@/types/database';
+import { getAgentSettings } from '@/services/agentService';
 import { 
   Send, 
   Sparkles, 

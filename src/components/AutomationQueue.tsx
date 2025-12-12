@@ -15,6 +15,10 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { ScheduledPostsRow, ScheduledPostType } from '@/types/database';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = supabase as SupabaseClient<any>;
 
 interface AutomationQueueProps {
   userId: string;
@@ -43,7 +47,7 @@ export function AutomationQueue({ userId, isVisible = true }: AutomationQueuePro
     
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('scheduled_posts')
         .select('*')
         .eq('user_id', userId)
@@ -79,7 +83,7 @@ export function AutomationQueue({ userId, isVisible = true }: AutomationQueuePro
   const handleCancel = async (postId: string) => {
     setCancellingId(postId);
     try {
-      const { error } = await supabase
+      const { error } = await db
         .from('scheduled_posts')
         .update({ status: 'cancelled' })
         .eq('id', postId)
