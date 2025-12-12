@@ -627,7 +627,7 @@ export function HomePage() {
               >
                 <div className="bg-black/80 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center justify-center gap-2">
                   <Settings className="w-4 h-4 text-white" />
-                  <span className="text-white font-bold text-sm">Edit Alter Ego</span>
+                  <span className="text-white font-bold text-sm">CONFIGURE</span>
                 </div>
               </button>
             ) : (
