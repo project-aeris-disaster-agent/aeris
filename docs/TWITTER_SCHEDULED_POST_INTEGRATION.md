@@ -752,25 +752,60 @@ export default async function handler(req, res) {
 
 ## Summary
 
-### Current State
+### Current State (COMPLETE ✅)
 ✅ Post generation system working
 ✅ Scheduling UI and database storage working
 ✅ Twitter OAuth and API integration working
 ✅ Immediate posting working
-❌ **Missing**: Automatic execution of scheduled posts
+✅ **Automatic execution of scheduled posts** (via pg_cron + pg_net)
 
-### Integration Goal
-Connect the scheduling system to the posting system via a cron job that:
-1. Periodically checks for due posts
-2. Executes them via existing `post-to-social` function
-3. Updates database status
+### Implementation Details
 
-### Next Steps
-1. Implement `execute-scheduled-posts` Edge Function
-2. Set up cron/scheduler (choose Option A, B, or C)
-3. Enhance `post-to-social` to support updating existing posts
-4. Add token refresh logic
-5. Test end-to-end flow
+The scheduler uses **Supabase pg_cron + pg_net** - the industry-standard approach for Supabase projects:
+
+```sql
+-- Cron job runs every 5 minutes
+SELECT cron.schedule(
+  'process-scheduled-posts',
+  '*/5 * * * *',
+  $$
+  SELECT net.http_post(
+    url := 'https://wqwhlbmsafgjlsjujuel.supabase.co/functions/v1/process-scheduled-posts',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer Sonara2026!'
+    ),
+    body := '{}'::jsonb
+  ) AS request_id;
+  $$
+);
+```
+
+**Key components:**
+- `pg_cron` extension: Runs SQL on a schedule within Postgres
+- `pg_net` extension: Makes async HTTP requests from Postgres
+- Edge Function deployed with `--no-verify-jwt`: Allows custom auth
+- `CRON_SECRET`: Shared secret for authentication
+
+### Supported Actions
+- `tweet`: Post a new tweet
+- `reply`: Reply to a specific tweet
+- `thread`: Post a thread (series of tweets)
+- `retweet`: Retweet a tweet
+- `like`: Like a tweet
+- `comment`: Comment on a tweet
+
+### Monitoring
+Check cron job status:
+```sql
+SELECT * FROM cron.job WHERE jobname = 'process-scheduled-posts';
+SELECT * FROM cron.job_run_details ORDER BY start_time DESC LIMIT 10;
+```
+
+Check HTTP responses:
+```sql
+SELECT * FROM net._http_response ORDER BY created DESC LIMIT 10;
+```
 
 ---
 

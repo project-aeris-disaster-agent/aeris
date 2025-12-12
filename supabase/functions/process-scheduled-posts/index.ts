@@ -414,8 +414,30 @@ serve(async (req) => {
 
   // Optional shared-secret auth
   if (CRON_SECRET) {
-    const authHeader = req.headers.get('authorization') || '';
-    if (authHeader !== `Bearer ${CRON_SECRET}`) {
+    // Try to get auth from headers first
+    let authHeader = req.headers.get('authorization') || req.headers.get('Authorization') || '';
+    
+    // Fallback: Extract from URL query params (cron-job.org sometimes sends headers as query params)
+    if (!authHeader) {
+      const url = new URL(req.url);
+      const authParam = url.searchParams.get('Authorization');
+      if (authParam) {
+        // Handle URL-encoded values (e.g., "Bearer+Sonara2026%21" -> "Bearer Sonara2026!")
+        authHeader = decodeURIComponent(authParam.replace(/\+/g, ' '));
+      }
+    }
+    
+    const expectedHeader = `Bearer ${CRON_SECRET}`;
+    
+    // Trim whitespace and compare
+    if (authHeader.trim() !== expectedHeader.trim()) {
+      console.error('Auth mismatch:', {
+        received: authHeader,
+        expected: expectedHeader,
+        receivedLength: authHeader.length,
+        expectedLength: expectedHeader.length,
+        url: req.url,
+      });
       return unauthorized();
     }
   }
