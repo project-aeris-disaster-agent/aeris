@@ -12,7 +12,8 @@ import {
   getOrCreateSession, 
   getSessionMessages
 } from '@/services/chatService';
-import type { ElizaOSCharacterCard, ProfileScores, LetterGrade } from '@/types/database';
+import type { ElizaOSCharacterCard, ProfileScores, LetterGrade, AgentSettings } from '@/types/database';
+import { getAgentSettings, DEFAULT_AGENT_SETTINGS } from '@/services/agentService';
 import { 
   Send, 
   Sparkles, 
@@ -117,6 +118,7 @@ export function HomePage() {
   const [profileScores, setProfileScores] = useState<ProfileScores | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
+  const [agentModeEnabled, setAgentModeEnabled] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Fetch user profile and character card status
@@ -186,6 +188,20 @@ export function HomePage() {
       setSocialAutomation(prev => ({ ...prev, twitter: false }));
     }
   }, [userProfile?.twitter_access_token]);
+
+  // Load agent mode status
+  useEffect(() => {
+    async function loadAgentSettings() {
+      if (!user?.id) return;
+      try {
+        const settings = await getAgentSettings(user.id);
+        setAgentModeEnabled(settings.enabled);
+      } catch (error) {
+        console.error('Failed to load agent settings:', error);
+      }
+    }
+    loadAgentSettings();
+  }, [user?.id]);
 
   // Initialize chat session when user has a character card
   useEffect(() => {
@@ -481,7 +497,10 @@ export function HomePage() {
                     className="w-full h-full object-cover object-top" 
                   />
                 </div>
-                <div className={`absolute bottom-1 right-1 w-4 h-4 rounded-full border-2 border-black ${hasAlterEgo ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                {/* Status Indicator */}
+                <div className={`absolute bottom-1 right-1 w-4 h-4 rounded-full border-2 border-black ${
+                  agentModeEnabled ? 'bg-green-400 animate-pulse' : hasAlterEgo ? 'bg-yellow-400' : 'bg-gray-500'
+                }`} />
               </div>
               
               {/* User Info */}
@@ -489,9 +508,18 @@ export function HomePage() {
                 <h3 className="text-white font-bold text-base">
                   {userProfile?.twitter_username ? `@${userProfile.twitter_username}` : '@YourUsername'}
                 </h3>
-                <p className="text-white/50 text-xs">
-                  {hasAlterEgo ? 'AI Twin Active' : 'Connect Twitter to start'}
-                </p>
+                <div className="flex items-center justify-center gap-1.5">
+                  {agentModeEnabled ? (
+                    <>
+                      <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                      <p className="text-green-400 text-xs font-medium">LIVE AGENT</p>
+                    </>
+                  ) : hasAlterEgo ? (
+                    <p className="text-yellow-400/70 text-xs">AGENT OFFLINE</p>
+                  ) : (
+                    <p className="text-white/50 text-xs">Connect Twitter to start</p>
+                  )}
+                </div>
               </div>
               
               {/* Real Metrics - Followers & Following */}
@@ -723,6 +751,7 @@ export function HomePage() {
                   conversationHistory={messages}
                   sessionId={sessionId}
                   connectedPlatforms={socialAutomation}
+                  onAgentModeChange={setAgentModeEnabled}
                 />
               </div>
             )}

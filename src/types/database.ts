@@ -20,6 +20,21 @@ export interface TwitterMetrics {
   listed_count?: number;
 }
 
+// Agent Mode settings for automated Twitter engagement
+export type AgentFrequency = 'daily' | '3days' | 'weekly';
+
+export interface AgentSettings {
+  enabled: boolean;
+  targetAccounts: string[]; // Twitter usernames without @
+  actions: {
+    retweet: boolean;
+    like: boolean;
+    mention: boolean;
+  };
+  frequency: AgentFrequency;
+  lastRunAt: string | null;
+}
+
 // ElizaOS Character Card Type (from CHARACTER_CARD_STRUCTURE.md)
 // Defined first since it's used by other types
 export interface ElizaOSCharacterCard {
@@ -78,6 +93,7 @@ export type ProfilesRow = {
   character_card_version: number;
   onboarding_completed: boolean;
   preferences: Record<string, any>;
+  agent_settings: AgentSettings | null;
   created_at: string;
   updated_at: string;
 };

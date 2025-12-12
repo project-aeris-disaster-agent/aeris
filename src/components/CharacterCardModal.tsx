@@ -20,8 +20,14 @@ import {
   Lock,
   Plus,
   Trash2,
+  Bot,
+  Clock,
+  Heart,
+  Repeat2,
+  AtSign,
 } from 'lucide-react';
-import type { ElizaOSCharacterCard, ProfileScores } from '@/types/database';
+import type { ElizaOSCharacterCard, ProfileScores, AgentSettings, AgentFrequency } from '@/types/database';
+import { getAgentSettings, updateAgentSettings, DEFAULT_AGENT_SETTINGS } from '@/services/agentService';
 import {
   generateCharacterCard,
   saveCharacterCard,
@@ -169,6 +175,7 @@ export function CharacterCardModal({
     style: true,
     topics: false,
     examples: false,
+    agent: false,
   });
   const [twitterProfile, setTwitterProfile] = useState<TwitterProfileData | null>(
     existingMetrics ? {
@@ -196,6 +203,11 @@ export function CharacterCardModal({
   const [newAdjectiveInput, setNewAdjectiveInput] = useState('');
   const [newStyleInputs, setNewStyleInputs] = useState({ all: '', chat: '', post: '' });
   const [newPostExampleInput, setNewPostExampleInput] = useState('');
+  
+  // Agent settings state
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
+  const [newTargetAccountInput, setNewTargetAccountInput] = useState('');
+  const [isLoadingAgentSettings, setIsLoadingAgentSettings] = useState(false);
 
   // Progress animation during generation
   useEffect(() => {
@@ -251,6 +263,23 @@ export function CharacterCardModal({
     }
   }, [isOpen, mode]);
 
+  // Load agent settings when modal opens
+  useEffect(() => {
+    if (isOpen && userId) {
+      setIsLoadingAgentSettings(true);
+      getAgentSettings(userId)
+        .then((settings) => {
+          setAgentSettings(settings);
+        })
+        .catch((error) => {
+          console.error('Failed to load agent settings:', error);
+        })
+        .finally(() => {
+          setIsLoadingAgentSettings(false);
+        });
+    }
+  }, [isOpen, userId]);
+
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
@@ -270,6 +299,7 @@ export function CharacterCardModal({
         setNewAdjectiveInput('');
         setNewStyleInputs({ all: '', chat: '', post: '' });
         setNewPostExampleInput('');
+        setNewTargetAccountInput('');
       }, 300);
     }
   }, [isOpen, mode, existingCard, existingScores, existingMetrics]);
@@ -1129,6 +1159,235 @@ export function CharacterCardModal({
                             </button>
                           </div>
                         </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Agent Settings Section */}
+                <div className="rounded-xl bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/30 overflow-hidden">
+                  <button
+                    onClick={() => toggleSection('agent')}
+                    className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Bot className="w-4 h-4 text-green-400" />
+                      <span className="text-white font-medium">Agent Settings</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        agentSettings.enabled 
+                          ? 'bg-green-500/30 text-green-300 animate-pulse' 
+                          : 'bg-white/10 text-white/50'
+                      }`}>
+                        {agentSettings.enabled ? 'LIVE' : 'OFF'}
+                      </span>
+                    </div>
+                    {expandedSections.agent ? (
+                      <ChevronUp className="w-4 h-4 text-white/50" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-white/50" />
+                    )}
+                  </button>
+                  {expandedSections.agent && (
+                    <div className="px-4 pb-4 space-y-4">
+                      {isLoadingAgentSettings ? (
+                        <div className="flex items-center justify-center py-4">
+                          <Loader2 className="w-5 h-5 text-green-400 animate-spin" />
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-white/40 text-xs">
+                            Configure automated engagement with target Twitter accounts
+                          </p>
+
+                          {/* Target Accounts */}
+                          <div className="space-y-2">
+                            <p className="text-white/50 text-xs uppercase flex items-center gap-2">
+                              <AtSign className="w-3 h-3" />
+                              Target Accounts
+                              <span className="text-white/30">({agentSettings.targetAccounts.length})</span>
+                            </p>
+                            
+                            {/* Current target accounts */}
+                            {agentSettings.targetAccounts.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {agentSettings.targetAccounts.map((account, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs bg-green-500/20 border-green-500/30 text-green-300"
+                                  >
+                                    @{account}
+                                    {state === 'editing' && (
+                                      <button
+                                        onClick={async () => {
+                                          const newAccounts = agentSettings.targetAccounts.filter((_, i) => i !== idx);
+                                          const updated = await updateAgentSettings(userId, { targetAccounts: newAccounts });
+                                          setAgentSettings(updated);
+                                        }}
+                                        className="ml-0.5 p-0.5 rounded-full hover:bg-white/20 transition-colors"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            
+                            {/* Add target account input */}
+                            {state === 'editing' && (
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={newTargetAccountInput}
+                                  onChange={(e) => setNewTargetAccountInput(e.target.value)}
+                                  onKeyPress={async (e) => {
+                                    if (e.key === 'Enter' && newTargetAccountInput.trim()) {
+                                      const account = newTargetAccountInput.trim().replace(/^@/, '');
+                                      if (!agentSettings.targetAccounts.includes(account)) {
+                                        const updated = await updateAgentSettings(userId, {
+                                          targetAccounts: [...agentSettings.targetAccounts, account],
+                                        });
+                                        setAgentSettings(updated);
+                                      }
+                                      setNewTargetAccountInput('');
+                                    }
+                                  }}
+                                  placeholder="@username"
+                                  className="flex-1 bg-white/5 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-green-400/50 placeholder:text-white/30"
+                                />
+                                <button
+                                  onClick={async () => {
+                                    if (newTargetAccountInput.trim()) {
+                                      const account = newTargetAccountInput.trim().replace(/^@/, '');
+                                      if (!agentSettings.targetAccounts.includes(account)) {
+                                        const updated = await updateAgentSettings(userId, {
+                                          targetAccounts: [...agentSettings.targetAccounts, account],
+                                        });
+                                        setAgentSettings(updated);
+                                      }
+                                      setNewTargetAccountInput('');
+                                    }
+                                  }}
+                                  disabled={!newTargetAccountInput.trim()}
+                                  className="px-3 py-1.5 rounded-lg bg-green-500/20 text-green-400 text-sm hover:bg-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Action Types */}
+                          <div className="space-y-2">
+                            <p className="text-white/50 text-xs uppercase">Actions</p>
+                            <div className="grid grid-cols-1 gap-2">
+                              {/* Auto Retweet */}
+                              <label className="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={agentSettings.actions.retweet}
+                                  onChange={async (e) => {
+                                    if (state === 'editing') {
+                                      const updated = await updateAgentSettings(userId, {
+                                        actions: { ...agentSettings.actions, retweet: e.target.checked },
+                                      });
+                                      setAgentSettings(updated);
+                                    }
+                                  }}
+                                  disabled={state !== 'editing'}
+                                  className="w-4 h-4 rounded border-2 border-green-500/40 bg-transparent checked:bg-green-500 checked:border-green-500 focus:ring-1 focus:ring-green-500/30"
+                                />
+                                <Repeat2 className="w-4 h-4 text-green-400" />
+                                <span className="text-white/80 text-sm">Auto Retweet</span>
+                              </label>
+
+                              {/* Auto Like */}
+                              <label className="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={agentSettings.actions.like}
+                                  onChange={async (e) => {
+                                    if (state === 'editing') {
+                                      const updated = await updateAgentSettings(userId, {
+                                        actions: { ...agentSettings.actions, like: e.target.checked },
+                                      });
+                                      setAgentSettings(updated);
+                                    }
+                                  }}
+                                  disabled={state !== 'editing'}
+                                  className="w-4 h-4 rounded border-2 border-green-500/40 bg-transparent checked:bg-green-500 checked:border-green-500 focus:ring-1 focus:ring-green-500/30"
+                                />
+                                <Heart className="w-4 h-4 text-pink-400" />
+                                <span className="text-white/80 text-sm">Auto Like</span>
+                              </label>
+
+                              {/* Auto @mention + Generated Tweet */}
+                              <label className="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={agentSettings.actions.mention}
+                                  onChange={async (e) => {
+                                    if (state === 'editing') {
+                                      const updated = await updateAgentSettings(userId, {
+                                        actions: { ...agentSettings.actions, mention: e.target.checked },
+                                      });
+                                      setAgentSettings(updated);
+                                    }
+                                  }}
+                                  disabled={state !== 'editing'}
+                                  className="w-4 h-4 rounded border-2 border-green-500/40 bg-transparent checked:bg-green-500 checked:border-green-500 focus:ring-1 focus:ring-green-500/30"
+                                />
+                                <AtSign className="w-4 h-4 text-cyan-400" />
+                                <span className="text-white/80 text-sm">Auto @mention + Generated Reply</span>
+                              </label>
+                            </div>
+                          </div>
+
+                          {/* Frequency */}
+                          <div className="space-y-2">
+                            <p className="text-white/50 text-xs uppercase flex items-center gap-2">
+                              <Clock className="w-3 h-3" />
+                              Frequency
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {([
+                                { value: 'daily', label: 'Daily' },
+                                { value: '3days', label: 'Every 3 Days' },
+                                { value: 'weekly', label: 'Weekly' },
+                              ] as { value: AgentFrequency; label: string }[]).map((option) => (
+                                <button
+                                  key={option.value}
+                                  onClick={async () => {
+                                    if (state === 'editing') {
+                                      const updated = await updateAgentSettings(userId, { frequency: option.value });
+                                      setAgentSettings(updated);
+                                    }
+                                  }}
+                                  disabled={state !== 'editing'}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                    agentSettings.frequency === option.value
+                                      ? 'bg-green-500/30 text-green-300 border border-green-500/50'
+                                      : 'bg-white/5 text-white/60 border border-white/10 hover:border-white/20'
+                                  } disabled:opacity-50`}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                            <p className="text-white/30 text-[10px]">
+                              Actions are randomized within the frequency window to avoid detection
+                            </p>
+                          </div>
+
+                          {/* Last Run Info */}
+                          {agentSettings.lastRunAt && (
+                            <div className="pt-2 border-t border-white/10">
+                              <p className="text-white/40 text-xs">
+                                Last run: {new Date(agentSettings.lastRunAt).toLocaleString()}
+                              </p>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

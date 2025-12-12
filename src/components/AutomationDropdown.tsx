@@ -7,7 +7,8 @@ import {
   RefreshCw,
   X,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Bot
 } from 'lucide-react';
 
 // Custom icons matching HomePage
@@ -23,7 +24,7 @@ const BaseIcon = ({ className }: { className?: string }) => (
     <path d="M12 6v12M8 10l4-4 4 4M8 14l4 4 4-4" stroke="currentColor" strokeWidth="2" fill="none"/>
   </svg>
 );
-import type { ElizaOSCharacterCard } from '@/types/database';
+import type { ElizaOSCharacterCard, AgentSettings } from '@/types/database';
 import type { ChatMessage } from '@/services/chatService';
 import { 
   generateRecommendedPost, 
@@ -32,6 +33,7 @@ import {
   calculateNextScheduleTime,
   type RecommendedPost 
 } from '@/services/automationService';
+import { getAgentSettings, toggleAgentMode, DEFAULT_AGENT_SETTINGS } from '@/services/agentService';
 
 interface AutomationDropdownProps {
   userId: string;
@@ -43,6 +45,7 @@ interface AutomationDropdownProps {
     farcaster: boolean;
     baseapp: boolean;
   };
+  onAgentModeChange?: (enabled: boolean) => void;
 }
 
 type ScheduleType = 'instant' | '24hrs' | '48hrs' | '72hrs' | 'daily' | 'weekly' | 'custom';
@@ -53,6 +56,7 @@ export function AutomationDropdown({
   conversationHistory,
   sessionId,
   connectedPlatforms,
+  onAgentModeChange,
 }: AutomationDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -67,6 +71,10 @@ export function AutomationDropdown({
   const [tags, setTags] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
+  
+  // Agent Mode state
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
+  const [isTogglingAgentMode, setIsTogglingAgentMode] = useState(false);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -107,6 +115,41 @@ export function AutomationDropdown({
     if (connectedPlatforms.baseapp) platforms.push('baseapp');
     setSelectedPlatforms(platforms);
   }, [connectedPlatforms]);
+
+  // Load agent settings on mount
+  useEffect(() => {
+    if (userId) {
+      getAgentSettings(userId)
+        .then((settings) => {
+          setAgentSettings(settings);
+          onAgentModeChange?.(settings.enabled);
+        })
+        .catch((error) => {
+          console.error('Failed to load agent settings:', error);
+        });
+    }
+  }, [userId]);
+
+  // Handle agent mode toggle
+  const handleAgentModeToggle = async () => {
+    if (isTogglingAgentMode) return;
+    
+    setIsTogglingAgentMode(true);
+    try {
+      const newEnabled = !agentSettings.enabled;
+      const updated = await toggleAgentMode(userId, newEnabled);
+      setAgentSettings(updated);
+      onAgentModeChange?.(newEnabled);
+    } catch (error) {
+      console.error('Failed to toggle agent mode:', error);
+      setPostStatus({
+        type: 'error',
+        message: 'Failed to toggle Agent Mode. Please try again.',
+      });
+    } finally {
+      setIsTogglingAgentMode(false);
+    }
+  };
 
   const handleGeneratePost = async () => {
     if (!characterCard || !sessionId) return;
@@ -331,6 +374,71 @@ export function AutomationDropdown({
                     >
                       <X className="w-3.5 h-3.5 text-yellow-400/80" />
                     </button>
+                  </div>
+
+                  {/* Agent Mode Toggle */}
+                  <div 
+                    className={`rounded-lg p-2.5 border-2 transition-all duration-300 ${
+                      agentSettings.enabled 
+                        ? 'bg-gradient-to-r from-green-500/20 to-emerald-500/20 border-green-500/50 shadow-lg shadow-green-500/20' 
+                        : 'bg-black/40 border-white/10'
+                    }`}
+                  >
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div className="flex items-center gap-2">
+                        <div className={`p-1.5 rounded-lg transition-all duration-300 ${
+                          agentSettings.enabled 
+                            ? 'bg-green-500/30 border border-green-500/50' 
+                            : 'bg-white/10 border border-white/20'
+                        }`}>
+                          <Bot className={`w-4 h-4 transition-colors ${
+                            agentSettings.enabled ? 'text-green-400' : 'text-white/50'
+                          }`} />
+                        </div>
+                        <div>
+                          <span className={`font-bold text-sm transition-colors ${
+                            agentSettings.enabled ? 'text-green-300' : 'text-white/70'
+                          }`}>
+                            AGENT MODE
+                          </span>
+                          <p className={`text-[10px] transition-colors ${
+                            agentSettings.enabled ? 'text-green-400/70' : 'text-white/40'
+                          }`}>
+                            {agentSettings.enabled ? 'Auto-engagement active' : 'Enable auto-engagement'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={agentSettings.enabled}
+                          onChange={handleAgentModeToggle}
+                          disabled={isTogglingAgentMode}
+                          className="sr-only peer"
+                        />
+                        <div className={`w-11 h-6 rounded-full transition-all duration-300 peer-focus:ring-2 peer-focus:ring-green-500/30 ${
+                          agentSettings.enabled 
+                            ? 'bg-gradient-to-r from-green-500 to-emerald-500' 
+                            : 'bg-white/20'
+                        }`}>
+                          <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-300 ${
+                            agentSettings.enabled ? 'translate-x-5' : 'translate-x-0'
+                          }`} />
+                        </div>
+                        {agentSettings.enabled && (
+                          <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full animate-pulse" />
+                        )}
+                      </div>
+                    </label>
+                    {agentSettings.enabled && (
+                      <div className="mt-2 pt-2 border-t border-green-500/20">
+                        <p className="text-green-400/80 text-[10px] flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                          <span className="font-medium">LIVE</span>
+                          <span className="text-green-400/60">• Monitoring {agentSettings.targetAccounts.length} target account{agentSettings.targetAccounts.length !== 1 ? 's' : ''}</span>
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   {/* Premium Post Content */}
