@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DitheringShader } from '@/components/ui/dithering-shader';
 import { CharacterCardModal } from '@/components/CharacterCardModal';
+import { AutomationQueue } from '@/components/AutomationQueue';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { supabase } from '@/lib/supabase';
@@ -752,6 +753,12 @@ export function HomePage() {
                   sessionId={sessionId}
                   connectedPlatforms={socialAutomation}
                   onAgentModeChange={setAgentModeEnabled}
+                />
+                
+                {/* Automation Queue - Shows scheduled posts */}
+                <AutomationQueue 
+                  userId={user?.id || ''} 
+                  isVisible={hasAlterEgo}
                 />
               </div>
             )}
