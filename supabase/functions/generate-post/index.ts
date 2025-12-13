@@ -3,6 +3,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { checkRateLimit, RATE_LIMITS, rateLimitResponse } from '../_shared/rateLimit.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -67,6 +68,13 @@ serve(async (req) => {
       post_examples,
       custom_tags,
     }: GeneratePostRequest = await req.json();
+
+    // Rate limiting - 10 post generations per minute per user
+    const rateLimitResult = checkRateLimit(user_id, RATE_LIMITS.postGeneration);
+    if (!rateLimitResult.allowed) {
+      console.warn(`Rate limit exceeded for user ${user_id}: post-gen`);
+      return rateLimitResponse(rateLimitResult, corsHeaders);
+    }
 
     // Debug logging
     console.log('Received custom_tags:', custom_tags);

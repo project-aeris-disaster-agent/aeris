@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { DitheringShader } from '@/components/ui/dithering-shader';
+// Lazy load DitheringShader to reduce initial bundle blocking
+const DitheringShader = lazy(() => import('@/components/ui/dithering-shader').then(m => ({ default: m.DitheringShader })));
 import { CharacterCardModal } from '@/components/CharacterCardModal';
 import { AutomationQueue } from '@/components/AutomationQueue';
 import { useAuth } from '@/contexts/AuthContext';
@@ -91,7 +92,7 @@ const BaseIcon = ({ className }: { className?: string }) => (
 export function HomePage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const { showError } = useNotifications();
+  const { showError, showWarning } = useNotifications();
   // Initial welcome message - will be updated when character card loads
   const getWelcomeMessage = useCallback((card?: ElizaOSCharacterCard | null): Message => ({
     id: 'welcome',
@@ -131,45 +132,48 @@ export function HomePage() {
       }
 
       try {
-        // Fetch user profile from Supabase
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('twitter_username, twitter_access_token, twitter_user_id, profile_photo_url, character_card_generated')
-          .eq('id', user.id)
-          .maybeSingle(); // Use maybeSingle to not error if no row found
+        // Fetch profile AND character card in PARALLEL using Promise.allSettled
+        const [profileResult, cardResult] = await Promise.allSettled([
+          supabase
+            .from('profiles')
+            .select('twitter_username, twitter_access_token, twitter_user_id, profile_photo_url, character_card_generated')
+            .eq('id', user.id)
+            .maybeSingle(),
+          getCharacterCard(user.id)
+        ]);
 
-        if (error) {
-          console.error('Error fetching profile:', error);
-          // Still continue - user might be authenticated but profile not created yet
-        }
-        
-        if (profile) {
-          const typedProfile = profile as unknown as UserProfile;
-          setUserProfile(typedProfile);
-          setHasAlterEgo(typedProfile.character_card_generated || false);
-
-          // If user has a character card, fetch it along with metadata
-          if (typedProfile.character_card_generated) {
-            try {
-              const card = await getCharacterCard(user.id);
-              if (card) {
-                setCharacterCard(card.card_data);
-                
-                // Extract metrics and scores from generation_metadata
-                const metadata = card.generation_metadata as any;
-                if (metadata?.twitter_metrics) {
-                  setTwitterMetrics(metadata.twitter_metrics);
-                }
-                if (metadata?.profile_scores) {
-                  setProfileScores(metadata.profile_scores);
-                }
-              }
-            } catch (cardErr) {
-              console.error('Error fetching character card:', cardErr);
-            }
+        // Process profile result
+        if (profileResult.status === 'fulfilled') {
+          const { data: profile, error } = profileResult.value;
+          
+          if (error) {
+            console.error('Error fetching profile:', error);
+          }
+          
+          if (profile) {
+            const typedProfile = profile as unknown as UserProfile;
+            setUserProfile(typedProfile);
+            setHasAlterEgo(typedProfile.character_card_generated || false);
+          } else {
+            console.log('No profile found for user, may need to complete Twitter login');
           }
         } else {
-          console.log('No profile found for user, may need to complete Twitter login');
+          console.error('Profile fetch failed:', profileResult.reason);
+        }
+
+        // Process character card result (if successful and card exists)
+        if (cardResult.status === 'fulfilled' && cardResult.value) {
+          const card = cardResult.value;
+          setCharacterCard(card.card_data);
+          
+          // Extract metrics and scores from generation_metadata
+          const metadata = card.generation_metadata as any;
+          if (metadata?.twitter_metrics) {
+            setTwitterMetrics(metadata.twitter_metrics);
+          }
+          if (metadata?.profile_scores) {
+            setProfileScores(metadata.profile_scores);
+          }
         }
       } catch (err) {
         console.error('Error in fetchUserData:', err);
@@ -395,8 +399,21 @@ export function HomePage() {
       }
     } catch (err) {
       console.error('Chat error:', err);
-      const errorMsg = err instanceof Error ? err.message : "Oops! Something went wrong. Let me try that again in a moment.";
-      showError(errorMsg);
+      const rawError = err instanceof Error ? err.message : "Unknown error";
+      
+      // Provide user-friendly error messages
+      let errorMsg: string;
+      if (rawError.includes('Rate limit') || rawError.includes('429') || rawError.includes('Too many')) {
+        errorMsg = "I'm a bit overwhelmed right now! Give me a moment to catch my breath. 😅";
+        showWarning('⏳ Rate limit reached. Please wait a moment before sending more messages.', 6000);
+      } else if (rawError.includes('401') || rawError.includes('unauthorized')) {
+        errorMsg = "Hmm, there's an authentication issue. Try refreshing the page.";
+        showError('Authentication error. Please refresh and try again.', 5000);
+      } else {
+        errorMsg = "Oops! Something went wrong. Let me try that again in a moment.";
+        showError(rawError, 5000);
+      }
+      
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -406,7 +423,7 @@ export function HomePage() {
     } finally {
       setIsTyping(false);
     }
-  }, [inputValue, user?.id, characterCard, sessionId]);
+  }, [inputValue, user?.id, characterCard, sessionId, showError, showWarning]);
 
   const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -417,23 +434,26 @@ export function HomePage() {
 
   return (
     <div className="relative min-h-screen w-full overflow-x-hidden">
-      {/* Background Shader - Full screen fixed */}
-      <DitheringShader 
-        shape="wave"
-        type="8x8"
-        colorBack="#001122"
-        colorFront="#ff0088"
-        pxSize={3}
-        speed={0.6}
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100vw',
-          height: '100vh',
-          zIndex: 0,
-        }}
-      />
+      {/* Background Shader - Full screen fixed, lazy loaded for faster initial render */}
+      <Suspense fallback={<div className="fixed inset-0 bg-[#001122]" style={{ zIndex: 0 }} />}>
+        <DitheringShader 
+          shape="wave"
+          type="8x8"
+          colorBack="#001122"
+          colorFront="#ff0088"
+          pxSize={3}
+          speed={0.6}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            zIndex: 0,
+          }}
+        />
+      </Suspense>
+      {/* #endregion */}
       
       {/* Header */}
       <header className="sticky top-0 z-50 flex items-center justify-between px-4 sm:px-6 py-3 border-b border-white/5 bg-black/40 backdrop-blur-md">

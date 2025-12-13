@@ -3,6 +3,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { checkRateLimit, RATE_LIMITS, rateLimitResponse } from '../_shared/rateLimit.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -30,6 +31,13 @@ serve(async (req) => {
     );
 
     const { user_id, content, platforms }: PostRequest = await req.json();
+
+    // Rate limiting - 10 social posts per hour per user
+    const rateLimitResult = checkRateLimit(user_id, RATE_LIMITS.socialPost);
+    if (!rateLimitResult.allowed) {
+      console.warn(`Rate limit exceeded for user ${user_id}: social-post`);
+      return rateLimitResponse(rateLimitResult, corsHeaders);
+    }
 
     if (!content || content.trim().length === 0) {
       throw new Error('Post content cannot be empty');

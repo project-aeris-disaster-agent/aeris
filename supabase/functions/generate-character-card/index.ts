@@ -3,6 +3,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { checkRateLimit, RATE_LIMITS, rateLimitResponse } from '../_shared/rateLimit.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1014,6 +1015,13 @@ serve(async (req) => {
         JSON.stringify({ error: 'Missing user_id' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Rate limiting - 3 character card generations per hour per user
+    const rateLimitResult = checkRateLimit(user_id, RATE_LIMITS.characterCard);
+    if (!rateLimitResult.allowed) {
+      console.warn(`Rate limit exceeded for user ${user_id}: char-card`);
+      return rateLimitResponse(rateLimitResult, corsHeaders);
     }
 
     // Get environment variables

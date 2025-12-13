@@ -59,9 +59,6 @@ export async function generateRecommendedPost(
     // Only include custom_tags if provided and not empty
     if (customTags && customTags.length > 0) {
       requestBody.custom_tags = customTags;
-      console.log('Sending custom_tags to edge function:', customTags);
-    } else {
-      console.log('No custom tags provided, using character card topics');
     }
 
     const response = await fetch(edgeFunctionUrl, {

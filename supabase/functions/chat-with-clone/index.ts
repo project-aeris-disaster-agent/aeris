@@ -2,6 +2,7 @@
 // Handles conversations using character card personality context
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { checkRateLimit, RATE_LIMITS, rateLimitResponse } from '../_shared/rateLimit.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -190,6 +191,13 @@ serve(async (req) => {
         JSON.stringify({ error: 'Missing required fields: user_id, message, or character_card' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Rate limiting - 30 messages per minute per user
+    const rateLimitResult = checkRateLimit(user_id, RATE_LIMITS.chat);
+    if (!rateLimitResult.allowed) {
+      console.warn(`Rate limit exceeded for user ${user_id}: chat`);
+      return rateLimitResponse(rateLimitResult, corsHeaders);
     }
 
     // Get Grok API key

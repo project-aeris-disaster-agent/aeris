@@ -150,14 +150,17 @@ async function saveMessage(
     throw new Error('Failed to save message');
   }
 
-  // Update session stats
-  await db
+  // Update session stats (just last_message_at - counter handled separately to avoid invalid RPC nesting)
+  const { error: updateError } = await db
     .from('agent_sessions')
     .update({
       last_message_at: new Date().toISOString(),
-      total_messages: db.rpc('increment_total_messages', { session_id_param: sessionId }) || undefined,
     })
     .eq('session_id', sessionId);
+  
+  if (updateError) {
+    console.error('Failed to update session:', updateError);
+  }
 
   return data.id;
 }

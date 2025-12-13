@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Bot
 } from 'lucide-react';
+import { useNotifications } from '@/contexts/NotificationContext';
 
 // Custom icons matching HomePage
 const FarcasterIcon = ({ className }: { className?: string }) => (
@@ -58,6 +59,7 @@ export function AutomationDropdown({
   connectedPlatforms,
   onAgentModeChange,
 }: AutomationDropdownProps) {
+  const { showSuccess, showError, showWarning } = useNotifications();
   const [isOpen, setIsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [recommendedPost, setRecommendedPost] = useState<RecommendedPost | null>(null);
@@ -152,13 +154,14 @@ export function AutomationDropdown({
   };
 
   const handleGeneratePost = async () => {
-    if (!characterCard || !sessionId) return;
+    if (!characterCard || !sessionId) {
+      return;
+    }
 
     setIsGenerating(true);
     setPostStatus(null);
 
     const tagsToUse = tags.length > 0 ? tags : undefined;
-    console.log('Generating post with tags:', tagsToUse);
 
     try {
       const post = await generateRecommendedPost(
@@ -176,10 +179,22 @@ export function AutomationDropdown({
       }
     } catch (error) {
       console.error('Failed to generate post:', error);
-      setPostStatus({
-        type: 'error',
-        message: 'Failed to generate post. Please try again.',
-      });
+      const errorMessage = error instanceof Error ? error.message : 'Failed to generate post';
+      
+      // Check for rate limit errors
+      if (errorMessage.includes('Rate limit') || errorMessage.includes('429') || errorMessage.includes('Too many')) {
+        showWarning('⏳ Too many requests. Please wait a moment before generating again.', 6000);
+        setPostStatus({
+          type: 'error',
+          message: 'Rate limit reached. Please wait before generating.',
+        });
+      } else {
+        showError(`Failed to generate post: ${errorMessage}`, 5000);
+        setPostStatus({
+          type: 'error',
+          message: 'Failed to generate post. Please try again.',
+        });
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -236,6 +251,7 @@ export function AutomationDropdown({
             type: 'success',
             message: `Posted successfully to ${selectedPlatforms.join(', ')}!`,
           });
+          showSuccess(`🎉 Posted to ${selectedPlatforms.map(p => p === 'twitter' ? 'X' : p).join(', ')}!`);
           // Reset after 3 seconds
           setTimeout(() => {
             setPostStatus(null);
@@ -243,12 +259,30 @@ export function AutomationDropdown({
           }, 3000);
         } else {
           const errors = results.filter(r => !r.success);
-          // Show detailed error message from Twitter API
           const errorDetails = errors.map(e => `${e.platform}: ${e.error || 'Unknown error'}`).join('\n');
           console.error('Post failed with errors:', errorDetails);
+          
+          // Check for specific error types and show user-friendly messages
+          const firstError = errors[0]?.error || '';
+          let userMessage = '';
+          
+          if (firstError.includes('Rate limit') || firstError.includes('429')) {
+            userMessage = 'Too many posts! Please wait a few minutes before posting again.';
+            showWarning(userMessage, 8000);
+          } else if (firstError.includes('401') || firstError.includes('unauthorized') || firstError.includes('token')) {
+            userMessage = 'Your X connection has expired. Please reconnect your account.';
+            showError(userMessage, 8000);
+          } else if (firstError.includes('duplicate') || firstError.includes('already posted')) {
+            userMessage = 'This content was already posted recently. Try adding something unique!';
+            showWarning(userMessage, 6000);
+          } else {
+            userMessage = `Failed to post: ${firstError || 'Unknown error'}`;
+            showError(userMessage, 6000);
+          }
+          
           setPostStatus({
             type: 'error',
-            message: `Failed to post to: ${errors.map(e => e.platform).join(', ')}. Error: ${errors[0]?.error || 'Unknown'}`,
+            message: userMessage,
           });
         }
       } else {
@@ -269,12 +303,13 @@ export function AutomationDropdown({
           scheduledDate = calculateNextScheduleTime(scheduleType as '24hrs' | '48hrs' | '72hrs' | 'daily' | 'weekly');
         }
 
-          await schedulePost(userId, contentToPost, scheduledDate, selectedPlatforms);
+        await schedulePost(userId, contentToPost, scheduledDate, selectedPlatforms);
         
         setPostStatus({
           type: 'success',
           message: `Post scheduled for ${scheduledDate.toLocaleString()}!`,
         });
+        showSuccess(`📅 Post scheduled for ${scheduledDate.toLocaleString()}`);
         
         setTimeout(() => {
           setPostStatus(null);
@@ -283,9 +318,18 @@ export function AutomationDropdown({
       }
     } catch (error) {
       console.error('Failed to post:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to post. Please try again.';
+      
+      // Check for rate limit errors
+      if (errorMessage.includes('Rate limit') || errorMessage.includes('429') || errorMessage.includes('Too many')) {
+        showWarning('⏳ Rate limit reached. Please wait before trying again.', 8000);
+      } else {
+        showError(`❌ ${errorMessage}`, 6000);
+      }
+      
       setPostStatus({
         type: 'error',
-        message: error instanceof Error ? error.message : 'Failed to post. Please try again.',
+        message: errorMessage,
       });
     } finally {
       setIsPosting(false);
