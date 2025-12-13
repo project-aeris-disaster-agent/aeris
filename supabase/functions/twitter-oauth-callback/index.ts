@@ -74,17 +74,25 @@ serve(async (req) => {
       tokenLength: tokens.access_token?.length,
     });
     
-    // Verify the token includes write scope
+    // Verify the token includes required scopes
     const grantedScopes = tokens.scope?.split(' ') || [];
     const hasWriteScope = grantedScopes.includes('tweet.write');
+    const hasLikeWriteScope = grantedScopes.includes('like.write');
+    const hasLikeReadScope = grantedScopes.includes('like.read');
     console.log('📝 Scope analysis:', {
       grantedScopes,
       hasWriteScope,
-      requestedScopes: ['tweet.read', 'tweet.write', 'users.read', 'offline.access'],
+      hasLikeWriteScope,
+      hasLikeReadScope,
+      requestedScopes: ['tweet.read', 'tweet.write', 'users.read', 'like.read', 'like.write', 'offline.access'],
     });
     
     if (!hasWriteScope) {
       console.warn('⚠️ WARNING: Twitter did NOT grant tweet.write scope! Posts will fail.');
+    }
+    
+    if (!hasLikeWriteScope) {
+      console.warn('⚠️ WARNING: Twitter did NOT grant like.write scope! Like actions will fail.');
     }
 
     // Fetch user profile with retry logic for rate limits

@@ -34,7 +34,7 @@ import {
   calculateNextScheduleTime,
   type RecommendedPost 
 } from '@/services/automationService';
-import { getAgentSettings, toggleAgentMode, DEFAULT_AGENT_SETTINGS } from '@/services/agentService';
+import { getAgentSettings, toggleAgentMode, DEFAULT_AGENT_SETTINGS, getAgentActivityStats, type AgentActivityStats } from '@/services/agentService';
 
 interface AutomationDropdownProps {
   userId: string;
@@ -77,6 +77,7 @@ export function AutomationDropdown({
   // Agent Mode state
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
   const [isTogglingAgentMode, setIsTogglingAgentMode] = useState(false);
+  const [agentStats, setAgentStats] = useState<AgentActivityStats | null>(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -118,7 +119,7 @@ export function AutomationDropdown({
     setSelectedPlatforms(platforms);
   }, [connectedPlatforms]);
 
-  // Load agent settings on mount
+  // Load agent settings and stats on mount
   useEffect(() => {
     if (userId) {
       getAgentSettings(userId)
@@ -129,10 +130,57 @@ export function AutomationDropdown({
         .catch((error) => {
           console.error('Failed to load agent settings:', error);
         });
+      
+      // Load activity stats
+      getAgentActivityStats(userId)
+        .then((stats) => {
+          setAgentStats(stats);
+        })
+        .catch((error) => {
+          console.error('Failed to load agent stats:', error);
+        });
     }
   }, [userId]);
 
+  // Refresh stats periodically when agent mode is enabled
+  useEffect(() => {
+    if (!agentSettings.enabled || !userId) return;
+    
+    const interval = setInterval(() => {
+      getAgentActivityStats(userId)
+        .then((stats) => {
+          setAgentStats(stats);
+        })
+        .catch((error) => {
+          console.error('Failed to refresh agent stats:', error);
+        });
+    }, 60000); // Refresh every minute
+
+    return () => clearInterval(interval);
+  }, [agentSettings.enabled, userId]);
+
   // Handle agent mode toggle
+  // Format relative time
+  const formatRelativeTime = (date: Date): string => {
+    const now = new Date();
+    const diffMs = date.getTime() - now.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 0) {
+      const absMins = Math.abs(diffMins);
+      if (absMins < 60) return `${absMins}m ago`;
+      const absHours = Math.abs(diffHours);
+      if (absHours < 24) return `${absHours}h ago`;
+      return `${Math.abs(diffDays)}d ago`;
+    }
+
+    if (diffMins < 60) return `in ${diffMins}m`;
+    if (diffHours < 24) return `in ${diffHours}h`;
+    return `in ${diffDays}d`;
+  };
+
   const handleAgentModeToggle = async () => {
     if (isTogglingAgentMode) return;
     
@@ -142,6 +190,17 @@ export function AutomationDropdown({
       const updated = await toggleAgentMode(userId, newEnabled);
       setAgentSettings(updated);
       onAgentModeChange?.(newEnabled);
+      
+      // Refresh stats after toggle
+      if (newEnabled) {
+        getAgentActivityStats(userId)
+          .then((stats) => {
+            setAgentStats(stats);
+          })
+          .catch((error) => {
+            console.error('Failed to load agent stats:', error);
+          });
+      }
     } catch (error) {
       console.error('Failed to toggle agent mode:', error);
       setPostStatus({
@@ -475,12 +534,34 @@ export function AutomationDropdown({
                       </div>
                     </label>
                     {agentSettings.enabled && (
-                      <div className="mt-2 pt-2 border-t border-green-500/20">
+                      <div className="mt-2 pt-2 border-t border-green-500/20 space-y-1.5">
                         <p className="text-green-400/80 text-[10px] flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
                           <span className="font-medium">LIVE</span>
                           <span className="text-green-400/60">• Monitoring {agentSettings.targetAccounts.length} target account{agentSettings.targetAccounts.length !== 1 ? 's' : ''}</span>
                         </p>
+                        {agentStats && (
+                          <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                            <div className="text-green-400/70">
+                              <span className="text-white/50">Pending: </span>
+                              <span className="font-semibold">{agentStats.pendingActions}</span>
+                            </div>
+                            <div className="text-green-400/70">
+                              <span className="text-white/50">Today: </span>
+                              <span className="font-semibold">{agentStats.executedToday}</span>
+                            </div>
+                            {agentStats.lastRunAt && (
+                              <div className="text-green-400/60 col-span-2 text-[9px]">
+                                Last run: {formatRelativeTime(agentStats.lastRunAt)}
+                              </div>
+                            )}
+                            {agentStats.nextScheduledAction && (
+                              <div className="text-green-400/60 col-span-2 text-[9px]">
+                                Next action: {formatRelativeTime(agentStats.nextScheduledAction)}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

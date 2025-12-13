@@ -121,7 +121,14 @@ export class TwitterOAuthService {
       response_type: 'code',
       client_id: this.config.clientId,
       redirect_uri: this.config.redirectUri,
-      scope: (this.config.scopes || ['tweet.read', 'tweet.write', 'users.read', 'offline.access']).join(' '),
+      scope: (this.config.scopes || [
+        'tweet.read', 
+        'tweet.write', 
+        'users.read', 
+        'like.read',
+        'like.write',
+        'offline.access'
+      ]).join(' '),
       state: state,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
@@ -252,9 +259,16 @@ export function getTwitterOAuthService(): TwitterOAuthService {
       }
     }
     
-    // Include tweet.write for posting capability
+    // Include tweet.write for posting capability and like.write for liking tweets
     // Requires: Twitter Developer Portal → Your App → Settings → User authentication settings → App permissions → Read and Write
-    const defaultScopes = ['tweet.read', 'tweet.write', 'users.read', 'offline.access'];
+    const defaultScopes = [
+      'tweet.read', 
+      'tweet.write', 
+      'users.read', 
+      'like.read',    // Read likes (for checking if already liked)
+      'like.write',   // Like tweets (for agent mode)
+      'offline.access'
+    ];
     const scopes = [...new Set([...envScopes, ...defaultScopes])];
 
     if (!clientId) {

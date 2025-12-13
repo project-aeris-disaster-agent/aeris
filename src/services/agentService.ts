@@ -273,3 +273,128 @@ export async function updateFrequency(
   return updateAgentSettings(userId, { frequency });
 }
 
+/**
+ * Execute agent actions instantly (Easter Egg feature)
+ * Bypasses scheduling and executes actions immediately
+ */
+export interface InstantExecutionResult {
+  action: 'retweet' | 'like' | 'comment';
+  tweetId: string;
+  targetAccount: string;
+  success: boolean;
+  error?: string;
+  postId?: string;
+  alreadyDone?: boolean;
+}
+
+export async function executeAgentActionsInstant(userId: string): Promise<{
+  success: boolean;
+  executed: number;
+  succeeded: number;
+  failed: number;
+  results: InstantExecutionResult[];
+  error?: string;
+}> {
+  try {
+    const edgeFunctionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/execute-agent-actions-instant`;
+    
+    const response = await fetch(edgeFunctionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ userId }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to execute agent actions');
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error executing instant agent actions:', error);
+    return {
+      success: false,
+      executed: 0,
+      succeeded: 0,
+      failed: 0,
+      results: [],
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Get agent activity statistics
+ */
+export interface AgentActivityStats {
+  pendingActions: number;
+  scheduledToday: number;
+  executedToday: number;
+  failedToday: number;
+  nextScheduledAction: Date | null;
+  lastRunAt: Date | null;
+}
+
+export async function getAgentActivityStats(userId: string): Promise<AgentActivityStats> {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  // Get pending actions
+  const { data: pendingData } = await db
+    .from('scheduled_posts')
+    .select('id, scheduled_for')
+    .eq('user_id', userId)
+    .eq('status', 'pending')
+    .eq('post_metadata->>generated_by', 'agent_mode')
+    .order('scheduled_for', { ascending: true })
+    .limit(1);
+
+  // Get actions scheduled today
+  const { data: scheduledTodayData } = await db
+    .from('scheduled_posts')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('post_metadata->>generated_by', 'agent_mode')
+    .gte('created_at', todayStart.toISOString())
+    .lt('created_at', todayEnd.toISOString());
+
+  // Get actions executed today
+  const { data: executedTodayData } = await db
+    .from('scheduled_posts')
+    .select('id, status')
+    .eq('user_id', userId)
+    .eq('post_metadata->>generated_by', 'agent_mode')
+    .eq('status', 'posted')
+    .gte('posted_at', todayStart.toISOString())
+    .lt('posted_at', todayEnd.toISOString());
+
+  // Get failed actions today
+  const { data: failedTodayData } = await db
+    .from('scheduled_posts')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('post_metadata->>generated_by', 'agent_mode')
+    .eq('status', 'failed')
+    .gte('created_at', todayStart.toISOString())
+    .lt('created_at', todayEnd.toISOString());
+
+  // Get agent settings for lastRunAt
+  const settings = await getAgentSettings(userId);
+
+  return {
+    pendingActions: pendingData?.length || 0,
+    scheduledToday: scheduledTodayData?.length || 0,
+    executedToday: executedTodayData?.length || 0,
+    failedToday: failedTodayData?.length || 0,
+    nextScheduledAction: pendingData && pendingData.length > 0 
+      ? new Date(pendingData[0].scheduled_for) 
+      : null,
+    lastRunAt: settings.lastRunAt ? new Date(settings.lastRunAt) : null,
+  };
+}
+

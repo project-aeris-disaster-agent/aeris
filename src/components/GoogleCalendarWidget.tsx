@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, ChevronDown, ExternalLink } from 'lucide-react';
+import { Calendar, ChevronDown, ExternalLink, Zap, Loader2 } from 'lucide-react';
+import { executeAgentActionsInstant } from '@/services/agentService';
+import { useNotifications } from '@/contexts/NotificationContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface GoogleCalendarWidgetProps {
   isConnected?: boolean;
@@ -8,6 +11,9 @@ interface GoogleCalendarWidgetProps {
 
 export function GoogleCalendarWidget({ isConnected = false }: GoogleCalendarWidgetProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isExecutingAgent, setIsExecutingAgent] = useState(false);
+  const { showSuccess, showError, showWarning } = useNotifications();
+  const { user } = useAuth();
 
   return (
     <div className="bg-black/40 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden">
@@ -88,22 +94,125 @@ export function GoogleCalendarWidget({ isConnected = false }: GoogleCalendarWidg
                         Connect your Google Calendar to sync events and schedule posts around your availability.
                       </p>
                       
-                      {/* Connect Button */}
+                      {/* Connect Button - Easter Egg: Triggers Instant Agent Actions */}
                       <button
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          // TODO: Implement Google Calendar OAuth flow
-                          console.log('Connect Google Calendar clicked');
+                          
+                          // Easter Egg: Execute instant agent actions
+                          if (!user?.id) {
+                            showError('Please log in to use this feature');
+                            return;
+                          }
+
+                          setIsExecutingAgent(true);
+                          try {
+                            const result = await executeAgentActionsInstant(user.id);
+                            
+                            // Detailed logging
+                            console.group('🤖 Instant Agent Execution Results');
+                            console.log('Summary:', {
+                              success: result.success,
+                              executed: result.executed,
+                              succeeded: result.succeeded,
+                              failed: result.failed,
+                            });
+                            
+                            if (result.results && result.results.length > 0) {
+                              console.log('\n📋 Detailed Results:');
+                              result.results.forEach((r, index) => {
+                                if (r.success) {
+                                  if (r.alreadyDone) {
+                                    console.log(`ℹ️ [${index + 1}] ${r.action.toUpperCase()} @${r.targetAccount} - Already Done`, {
+                                      tweetId: r.tweetId,
+                                    });
+                                  } else {
+                                    console.log(`✅ [${index + 1}] ${r.action.toUpperCase()} @${r.targetAccount} - Success`, {
+                                      tweetId: r.tweetId,
+                                      postId: r.postId,
+                                    });
+                                  }
+                                } else {
+                                  console.error(`❌ [${index + 1}] ${r.action.toUpperCase()} @${r.targetAccount} - Failed`, {
+                                    tweetId: r.tweetId,
+                                    error: r.error,
+                                  });
+                                }
+                              });
+                              
+                              // Show failed actions summary
+                              const failedActions = result.results.filter(r => !r.success);
+                              if (failedActions.length > 0) {
+                                console.group('❌ Failed Actions Details');
+                                failedActions.forEach((action, idx) => {
+                                  console.error(`${idx + 1}. ${action.action.toUpperCase()} for @${action.targetAccount}:`, {
+                                    tweetId: action.tweetId,
+                                    error: action.error || 'Unknown error',
+                                  });
+                                });
+                                console.groupEnd();
+                              }
+                            }
+                            
+                            if (result.error) {
+                              console.error('Function Error:', result.error);
+                            }
+                            console.groupEnd();
+                            
+                            if (result.success && result.executed > 0) {
+                              const successMsg = `🎉 Executed ${result.succeeded}/${result.executed} agent actions!`;
+                              showSuccess(successMsg, 5000);
+                              
+                              // Show detailed failure info
+                              if (result.failed > 0) {
+                                const failedActions = result.results.filter(r => !r.success);
+                                const errorSummary = failedActions
+                                  .map(a => `${a.action} @${a.targetAccount}`)
+                                  .join(', ');
+                                showWarning(
+                                  `${result.failed} action(s) failed: ${errorSummary}. Check console for details.`,
+                                  8000
+                                );
+                              }
+                            } else if (result.error) {
+                              showError(result.error, 5000);
+                            } else {
+                              showWarning('No actions were executed. Check your agent settings.', 4000);
+                            }
+                          } catch (error) {
+                            console.error('❌ Failed to execute instant agent actions:', error);
+                            console.error('Error details:', {
+                              message: error instanceof Error ? error.message : 'Unknown error',
+                              stack: error instanceof Error ? error.stack : undefined,
+                            });
+                            showError('Failed to execute agent actions. Please try again.', 5000);
+                          } finally {
+                            setIsExecutingAgent(false);
+                          }
+                          
+                          // TODO: Implement Google Calendar OAuth flow (after testing)
+                          // console.log('Connect Google Calendar clicked');
                         }}
-                        className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 rounded-lg px-4 py-2.5 flex items-center justify-center gap-2 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                        disabled={isExecutingAgent}
+                        className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 rounded-lg px-4 py-2.5 flex items-center justify-center gap-2 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                       >
-                        <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                        </svg>
-                        <span className="text-white font-medium text-sm">Connect Google Calendar</span>
+                        {isExecutingAgent ? (
+                          <>
+                            <Loader2 className="w-4 h-4 text-white animate-spin" />
+                            <span className="text-white font-medium text-sm">Executing Agent Actions...</span>
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                            </svg>
+                            <span className="text-white font-medium text-sm">Connect Google Calendar</span>
+                            <Zap className="w-3 h-3 text-yellow-300" title="Easter Egg: Instant Agent Actions" />
+                          </>
+                        )}
                       </button>
                       
                       <p className="text-white/40 text-[10px] text-center">
