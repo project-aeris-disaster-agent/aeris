@@ -76,7 +76,7 @@ interface NotificationContainerProps {
 
 export function NotificationContainer({ notifications, onDismiss }: NotificationContainerProps) {
   return (
-    <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 max-w-md w-full pointer-events-none">
+    <div className="fixed top-3 right-2 sm:top-4 sm:right-4 z-[9999] flex flex-col gap-2 max-w-[calc(100vw-1rem)] sm:max-w-md pointer-events-none">
       <AnimatePresence mode="popLayout">
         {notifications.map((notification) => (
           <div key={notification.id} className="pointer-events-auto">

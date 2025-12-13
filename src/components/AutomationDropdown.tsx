@@ -73,11 +73,54 @@ export function AutomationDropdown({
   const [tags, setTags] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownPosition, setDropdownPosition] = useState<'above' | 'below'>('above');
   
   // Agent Mode state
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
   const [isTogglingAgentMode, setIsTogglingAgentMode] = useState(false);
   const [agentStats, setAgentStats] = useState<AgentActivityStats | null>(null);
+
+  // Calculate dropdown position on desktop to avoid header overlap
+  useEffect(() => {
+    if (!isOpen || !dropdownRef.current || typeof window === 'undefined') return;
+    
+    const handlePosition = () => {
+      // Only check on desktop (lg breakpoint)
+      if (window.innerWidth >= 1024) {
+        const container = dropdownRef.current;
+        if (!container) return;
+        
+        // Find the button element within the container
+        const button = container.querySelector('button');
+        if (!button) return;
+        
+        const buttonRect = button.getBoundingClientRect();
+        const headerHeight = 80; // Approximate header height + padding
+        const spaceAbove = buttonRect.top - headerHeight;
+        const minSpaceRequired = 120; // Minimum space needed to avoid header overlap
+        
+        // If not enough space above, position below instead
+        if (spaceAbove < minSpaceRequired) {
+          setDropdownPosition('below');
+        } else {
+          setDropdownPosition('above');
+        }
+      } else {
+        setDropdownPosition('above'); // Mobile always uses fixed positioning
+      }
+    };
+    
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(handlePosition);
+    
+    window.addEventListener('resize', handlePosition);
+    window.addEventListener('scroll', handlePosition, true);
+    
+    return () => {
+      window.removeEventListener('resize', handlePosition);
+      window.removeEventListener('scroll', handlePosition, true);
+    };
+  }, [isOpen]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -441,11 +484,20 @@ export function AutomationDropdown({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-x-4 bottom-24 z-50 overflow-hidden
-              lg:absolute lg:inset-auto lg:left-0 lg:right-0 lg:bottom-full lg:mb-2 lg:top-auto lg:mt-2"
+            className={`fixed inset-x-3 bottom-28 z-50 overflow-hidden
+              sm:inset-x-4 sm:bottom-32
+              lg:absolute lg:inset-auto lg:left-0 lg:right-0 lg:z-[60] ${
+                dropdownPosition === 'above' 
+                  ? 'lg:bottom-full lg:mb-2 lg:top-auto lg:mt-2' 
+                  : 'lg:top-full lg:mt-2 lg:bottom-auto lg:mb-0'
+              }`}
             style={{
               // Keep panel above footer on mobile; roomy on desktop
-              maxHeight: 'calc(100vh - 140px)',
+              maxHeight: typeof window !== 'undefined' && window.innerWidth >= 1024 
+                ? dropdownPosition === 'above'
+                  ? 'min(calc(100vh - 200px), 600px)' // Desktop above: account for header + spacing
+                  : 'min(calc(100vh - 300px), 600px)' // Desktop below: account for button + spacing
+                : 'calc(100vh - 160px)', // Mobile: account for footer
             }}
           >
             {/* Premium Gold Border Container */}
@@ -457,7 +509,7 @@ export function AutomationDropdown({
                 <div className="absolute bottom-0 left-0 w-8 h-8 border-l-2 border-b-2 border-yellow-500/50 rounded-bl-2xl" />
                 <div className="absolute bottom-0 right-0 w-8 h-8 border-r-2 border-b-2 border-yellow-500/50 rounded-br-2xl" />
                 
-                <div className="p-3 space-y-2.5 relative z-10 flex-1 flex flex-col min-h-0">
+                <div className="p-2.5 sm:p-3 space-y-2 sm:space-y-2.5 relative z-10 flex-1 flex flex-col min-h-0">
                   {/* Premium Header */}
                   <div className="flex items-center justify-between pb-2 border-b border-yellow-500/20">
                     <div className="flex items-center gap-2">
