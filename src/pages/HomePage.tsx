@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { AutomationDropdown } from '@/components/AutomationDropdown';
 import { GoogleCalendarWidget } from '@/components/GoogleCalendarWidget';
+import { ConsoleLogs } from '@/components/ConsoleLogs';
 
 interface Message {
   id: string;
@@ -121,6 +122,7 @@ export function HomePage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [agentModeEnabled, setAgentModeEnabled] = useState(false);
+  const [isConsoleLogsOpen, setIsConsoleLogsOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Fetch user profile and character card status
@@ -459,7 +461,11 @@ export function HomePage() {
       <header className="sticky top-0 z-50 flex items-center justify-between px-4 sm:px-6 py-3 border-b border-white/5 bg-black/40 backdrop-blur-md">
         <img src="/sona-weblogo.svg" alt="SONA Logo" className="h-8 sm:h-10 w-auto" />
         <div className="flex items-center gap-2">
-          <button className="p-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
+          <button 
+            onClick={() => setIsConsoleLogsOpen(true)}
+            className="p-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+            title="Console Logs & Settings"
+          >
             <Settings className="w-4 h-4 text-white/70" />
           </button>
           <button 
@@ -886,6 +892,16 @@ export function HomePage() {
           existingScores={profileScores || undefined}
           existingMetrics={twitterMetrics || undefined}
           onSuccess={handleCharacterCardSuccess}
+        />
+      )}
+
+      {/* Console Logs Modal */}
+      {user && (
+        <ConsoleLogs
+          isOpen={isConsoleLogsOpen}
+          onClose={() => setIsConsoleLogsOpen(false)}
+          userId={user.id}
+          twitterAccessToken={userProfile?.twitter_access_token || null}
         />
       )}
     </div>

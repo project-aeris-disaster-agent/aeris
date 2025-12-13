@@ -339,6 +339,91 @@ export interface AgentActivityStats {
   lastRunAt: Date | null;
 }
 
+/**
+ * Predicted agent action (preview of what will be scheduled)
+ */
+export interface PredictedAgentAction {
+  id: string; // Generated ID for UI key
+  actionType: 'retweet' | 'like' | 'comment';
+  targetAccount: string;
+  predictedScheduleTime: Date;
+  actionIndex: number; // For staggered timing
+}
+
+/**
+ * Calculate predicted agent actions based on current settings
+ * This shows what actions WILL be scheduled on the next cron run
+ */
+export function calculatePredictedAgentActions(
+  settings: AgentSettings
+): PredictedAgentAction[] {
+  if (!settings.enabled || settings.targetAccounts.length === 0) {
+    return [];
+  }
+
+  // Count enabled actions
+  const enabledActions: Array<'retweet' | 'like' | 'comment'> = [];
+  if (settings.actions.retweet) enabledActions.push('retweet');
+  if (settings.actions.like) enabledActions.push('like');
+  if (settings.actions.mention) enabledActions.push('comment');
+
+  if (enabledActions.length === 0) {
+    return [];
+  }
+
+  // Calculate base schedule time (when cron would run next)
+  const lastRun = settings.lastRunAt ? new Date(settings.lastRunAt) : null;
+  
+  // Use average time for frequency (middle of min/max range)
+  let avgHours: number;
+  switch (settings.frequency) {
+    case 'daily':
+      avgHours = 24; // Average of 20-28 hours
+      break;
+    case '3days':
+      avgHours = 72; // Average of 66-78 hours
+      break;
+    case 'weekly':
+      avgHours = 168; // Average of 144-192 hours (7 days)
+      break;
+    default:
+      avgHours = 24;
+  }
+
+  // Calculate when next cron run would schedule actions
+  // If lastRun exists and it's been less than min hours, use lastRun + avgHours
+  // Otherwise, use now + avgHours (would schedule immediately)
+  const baseScheduleTime = lastRun && shouldRunAgent(settings) === false
+    ? new Date(lastRun.getTime() + avgHours * 60 * 60 * 1000)
+    : calculateRandomizedScheduleTime(settings.frequency, lastRun);
+
+  const predictedActions: PredictedAgentAction[] = [];
+  let globalActionIndex = 0;
+
+  // For each target account
+  for (const targetAccount of settings.targetAccounts) {
+    // For each enabled action type
+    for (const actionType of enabledActions) {
+      const scheduledTime = addActionDelay(baseScheduleTime, globalActionIndex);
+      
+      predictedActions.push({
+        id: `predicted-${targetAccount}-${actionType}-${globalActionIndex}`,
+        actionType,
+        targetAccount,
+        predictedScheduleTime: scheduledTime,
+        actionIndex: globalActionIndex,
+      });
+      
+      globalActionIndex++;
+    }
+  }
+
+  // Sort by predicted schedule time
+  return predictedActions.sort(
+    (a, b) => a.predictedScheduleTime.getTime() - b.predictedScheduleTime.getTime()
+  );
+}
+
 export async function getAgentActivityStats(userId: string): Promise<AgentActivityStats> {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
