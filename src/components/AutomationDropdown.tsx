@@ -73,54 +73,13 @@ export function AutomationDropdown({
   const [tags, setTags] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [dropdownPosition, setDropdownPosition] = useState<'above' | 'below'>('above');
   
   // Agent Mode state
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
   const [isTogglingAgentMode, setIsTogglingAgentMode] = useState(false);
   const [agentStats, setAgentStats] = useState<AgentActivityStats | null>(null);
 
-  // Calculate dropdown position on desktop to avoid header overlap
-  useEffect(() => {
-    if (!isOpen || !dropdownRef.current || typeof window === 'undefined') return;
-    
-    const handlePosition = () => {
-      // Only check on desktop (lg breakpoint)
-      if (window.innerWidth >= 1024) {
-        const container = dropdownRef.current;
-        if (!container) return;
-        
-        // Find the button element within the container
-        const button = container.querySelector('button');
-        if (!button) return;
-        
-        const buttonRect = button.getBoundingClientRect();
-        const headerHeight = 80; // Approximate header height + padding
-        const spaceAbove = buttonRect.top - headerHeight;
-        const minSpaceRequired = 120; // Minimum space needed to avoid header overlap
-        
-        // If not enough space above, position below instead
-        if (spaceAbove < minSpaceRequired) {
-          setDropdownPosition('below');
-        } else {
-          setDropdownPosition('above');
-        }
-      } else {
-        setDropdownPosition('above'); // Mobile always uses fixed positioning
-      }
-    };
-    
-    // Use requestAnimationFrame to ensure DOM is ready
-    requestAnimationFrame(handlePosition);
-    
-    window.addEventListener('resize', handlePosition);
-    window.addEventListener('scroll', handlePosition, true);
-    
-    return () => {
-      window.removeEventListener('resize', handlePosition);
-      window.removeEventListener('scroll', handlePosition, true);
-    };
-  }, [isOpen]);
+  // No longer need position calculation since we're using a centered modal
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -476,40 +435,43 @@ export function AutomationDropdown({
         </div>
       </button>
 
-      {/* Dropdown Panel - Premium Gold/Black Theme */}
+      {/* Modal Popup - Premium Gold/Black Theme */}
       <AnimatePresence>
         {isOpen && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className={`fixed inset-x-3 bottom-28 z-50 overflow-hidden
-              sm:inset-x-4 sm:bottom-32
-              lg:absolute lg:inset-auto lg:left-0 lg:right-0 lg:z-[60] ${
-                dropdownPosition === 'above' 
-                  ? 'lg:bottom-full lg:mb-2 lg:top-auto lg:mt-2' 
-                  : 'lg:top-full lg:mt-2 lg:bottom-auto lg:mb-0'
-              }`}
-            style={{
-              // Keep panel above footer on mobile; roomy on desktop
-              maxHeight: typeof window !== 'undefined' && window.innerWidth >= 1024 
-                ? dropdownPosition === 'above'
-                  ? 'min(calc(100vh - 200px), 600px)' // Desktop above: account for header + spacing
-                  : 'min(calc(100vh - 300px), 600px)' // Desktop below: account for button + spacing
-                : 'calc(100vh - 160px)', // Mobile: account for footer
-            }}
-          >
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90]"
+              onClick={() => setIsOpen(false)}
+            />
+            
+            {/* Modal Content */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center p-4 pointer-events-none"
+            >
+              <div 
+                className="w-full max-w-2xl max-h-[90vh] overflow-hidden pointer-events-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
             {/* Premium Gold Border Container */}
-            <div className="bg-gradient-to-br from-yellow-600/20 via-yellow-500/10 to-orange-500/20 rounded-2xl p-[2px] shadow-2xl h-full flex flex-col">
-              <div className="bg-black/95 backdrop-blur-xl rounded-2xl border-2 border-yellow-500/30 relative overflow-hidden h-full flex flex-col">
+            <div className="bg-gradient-to-br from-yellow-600/20 via-yellow-500/10 to-orange-500/20 rounded-2xl p-[2px] shadow-2xl flex flex-col max-h-[90vh]">
+              <div className="bg-black/95 backdrop-blur-xl rounded-2xl border-2 border-yellow-500/30 relative overflow-hidden flex flex-col max-h-full">
                 {/* Decorative Corner Accents */}
                 <div className="absolute top-0 left-0 w-8 h-8 border-l-2 border-t-2 border-yellow-500/50 rounded-tl-2xl" />
                 <div className="absolute top-0 right-0 w-8 h-8 border-r-2 border-t-2 border-yellow-500/50 rounded-tr-2xl" />
                 <div className="absolute bottom-0 left-0 w-8 h-8 border-l-2 border-b-2 border-yellow-500/50 rounded-bl-2xl" />
                 <div className="absolute bottom-0 right-0 w-8 h-8 border-r-2 border-b-2 border-yellow-500/50 rounded-br-2xl" />
                 
-                <div className="p-2.5 sm:p-3 space-y-2 sm:space-y-2.5 relative z-10 flex-1 flex flex-col min-h-0">
+                {/* Scrollable Content Area */}
+                <div className="p-2.5 sm:p-3 space-y-2 sm:space-y-2.5 relative z-10 flex flex-col flex-1 min-h-0 overflow-y-auto">
                   {/* Premium Header */}
                   <div className="flex items-center justify-between pb-2 border-b border-yellow-500/20">
                     <div className="flex items-center gap-2">
@@ -820,35 +782,38 @@ export function AutomationDropdown({
                     </div>
                   )}
 
-                  {/* Highlighted AUTOMATE NOW Button */}
-                  <div className="pt-2 border-t-2 border-yellow-500/30">
-                    <button
-                      onClick={handlePost}
-                      disabled={
-                        isPosting ||
-                        !recommendedPost ||
-                        selectedPlatforms.length === 0 ||
-                        !editableContent.trim()
-                      }
-                      className="w-full bg-gradient-to-r from-yellow-500 via-yellow-600 to-orange-500 hover:from-yellow-400 hover:via-yellow-500 hover:to-orange-400 rounded-lg px-4 py-3 text-black font-extrabold text-sm hover:scale-[1.02] transition-all disabled:opacity-50 disabled:hover:scale-100 flex items-center justify-center gap-2 border-2 border-yellow-400/60 shadow-2xl shadow-yellow-500/40 disabled:shadow-none uppercase tracking-wider"
-                    >
-                      {isPosting ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span className="text-xs">{scheduleType === 'instant' ? 'Posting...' : 'Scheduling...'}</span>
-                        </>
-                      ) : (
-                        <>
-                          <Zap className="w-4 h-4" />
-                          {scheduleType === 'instant' ? 'AUTOMATE NOW' : 'SCHEDULE POST'}
-                        </>
-                      )}
-                    </button>
-                  </div>
+                </div>
+                
+                {/* Fixed Bottom Button - Always Visible */}
+                <div className="p-2.5 sm:p-3 pt-2 border-t-2 border-yellow-500/30 bg-black/95 flex-shrink-0">
+                  <button
+                    onClick={handlePost}
+                    disabled={
+                      isPosting ||
+                      !recommendedPost ||
+                      selectedPlatforms.length === 0 ||
+                      !editableContent.trim()
+                    }
+                    className="w-full bg-gradient-to-r from-yellow-500 via-yellow-600 to-orange-500 hover:from-yellow-400 hover:via-yellow-500 hover:to-orange-400 rounded-lg px-4 py-3 text-black font-extrabold text-sm hover:scale-[1.02] transition-all disabled:opacity-50 disabled:hover:scale-100 flex items-center justify-center gap-2 border-2 border-yellow-400/60 shadow-2xl shadow-yellow-500/40 disabled:shadow-none uppercase tracking-wider"
+                  >
+                    {isPosting ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span className="text-xs">{scheduleType === 'instant' ? 'Posting...' : 'Scheduling...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-4 h-4" />
+                        {scheduleType === 'instant' ? 'AUTOMATE NOW' : 'SCHEDULE POST'}
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
-            </div>
-          </motion.div>
+                </div>
+              </div>
+            </motion.div>
+          </>
           )}
         </AnimatePresence>
     </div>
