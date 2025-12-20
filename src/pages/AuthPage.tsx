@@ -37,7 +37,7 @@ export function AuthPage() {
             className="h-12 sm:h-16 md:h-20 w-auto mb-2 sm:mb-3"
           />
           <p className="text-white font-bold text-sm sm:text-base md:text-lg text-center">
-            Create your AI Alter-Ego Instantly
+            Automate your Online Persona with AI
           </p>
         </div>
         

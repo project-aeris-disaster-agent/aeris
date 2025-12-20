@@ -5,7 +5,7 @@ import { getTwitterOAuthService } from '@/services/twitterOAuth';
 import { exchangeCodeForTokens } from '@/services/twitterApi';
 import { AuthService } from '@/services/auth';
 import { supabase } from '@/lib/supabase';
-import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, RefreshCcw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { DitheringShader } from '@/components/ui/dithering-shader';
 
@@ -14,10 +14,33 @@ export function TwitterCallbackPage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState('');
+  const [showSwitchAccountHelp, setShowSwitchAccountHelp] = useState(false);
   
   // Prevent multiple executions on mobile browsers
   const hasProcessedRef = useRef(false);
   const isProcessingRef = useRef(false);
+
+  // Handler for "Try Again" button - clears state and redirects to auth page
+  const handleTryAgain = () => {
+    console.log('🔄 User clicked Try Again - clearing OAuth state');
+    AuthService.clearAllOAuthState();
+    navigate('/auth', { replace: true });
+  };
+
+  // Handler for "Switch Account" button - initiates fresh OAuth flow
+  const handleSwitchAccount = async () => {
+    console.log('🔀 User clicked Switch Account - initiating fresh OAuth flow');
+    AuthService.clearAllOAuthState();
+    
+    try {
+      const oauthService = getTwitterOAuthService();
+      const { url } = await oauthService.getAccountSwitchUrl();
+      window.location.replace(url);
+    } catch (error) {
+      console.error('Error initiating account switch:', error);
+      navigate('/auth', { replace: true });
+    }
+  };
 
   useEffect(() => {
     // Early validation - if we don't have code or error, don't process
@@ -40,14 +63,16 @@ export function TwitterCallbackPage() {
       
       // If we've been redirected here 3+ times in less than 5 seconds, we're in a loop
       if (count >= 3 && age < 5000) {
-        console.error('❌ Redirect loop detected! Clearing OAuth state and redirecting to auth page.');
+        console.error('❌ Redirect loop detected! Clearing OAuth state.');
         const oauthService = getTwitterOAuthService();
         oauthService.clearStoredData();
         sessionStorage.removeItem('twitter_callback_redirect_count');
         sessionStorage.removeItem('twitter_callback_redirect_timestamp');
         setStatus('error');
-        setMessage('OAuth redirect loop detected. Please try signing in again.');
-        navigate('/auth', { replace: true });
+        setShowSwitchAccountHelp(true);
+        setMessage('We detected a login loop. This often happens when switching between Twitter accounts. Please use the buttons below to retry.');
+        hasProcessedRef.current = true;
+        // Don't auto-redirect - let user choose action
         return;
       }
       
@@ -131,27 +156,31 @@ export function TwitterCallbackPage() {
         
         if (!storedState) {
           setStatus('error');
-          setMessage('OAuth session expired or not found. Please try signing in again.');
+          setShowSwitchAccountHelp(true);
+          setMessage('OAuth session expired or not found. This can happen when switching between Twitter accounts. Please try again.');
           console.error('❌ No stored state found in localStorage. This may happen if:', [
             '1. The browser cleared localStorage',
             '2. You opened the callback in a different browser/tab',
             '3. The OAuth flow took longer than 10 minutes',
             '4. There was a domain mismatch between redirects',
+            '5. User switched Twitter accounts mid-flow',
           ].join('\n'));
-          setTimeout(() => navigate('/auth'), 3000);
+          // Don't auto-redirect - let user choose action
           return;
         }
         
         if (state !== storedState) {
           setStatus('error');
-          setMessage('Security validation failed. Please try signing in again.');
-          console.error('❌ State mismatch:', {
+          // State mismatch often occurs when switching accounts
+          setShowSwitchAccountHelp(true);
+          setMessage('Security validation failed. This often happens when switching Twitter accounts. Please try again or use the "Switch Account" button below.');
+          console.error('❌ State mismatch (likely account switch issue):', {
             received: state.substring(0, 20),
             stored: storedState.substring(0, 20),
             receivedLength: state.length,
             storedLength: storedState.length,
           });
-          setTimeout(() => navigate('/auth'), 3000);
+          // Don't auto-redirect - let user choose action
           return;
         }
 
@@ -407,7 +436,26 @@ export function TwitterCallbackPage() {
                   <div className="space-y-2">
                     <h2 className="text-xl font-bold text-white">Authentication Failed</h2>
                     <p className="text-white/80 text-sm">{message}</p>
-                    <p className="text-white/60 text-xs mt-4">Redirecting to login...</p>
+                    
+                    {/* Action buttons */}
+                    <div className="flex flex-col gap-2 mt-4">
+                      <button
+                        onClick={handleTryAgain}
+                        className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-white text-sm transition-colors flex items-center justify-center gap-2"
+                      >
+                        <RefreshCcw className="w-4 h-4" />
+                        Try Again
+                      </button>
+                      
+                      {showSwitchAccountHelp && (
+                        <button
+                          onClick={handleSwitchAccount}
+                          className="px-4 py-2 bg-gradient-to-r from-pink-600/80 to-cyan-500/80 hover:from-pink-600 hover:to-cyan-500 rounded-lg text-white text-sm font-medium transition-colors"
+                        >
+                          Switch Twitter Account
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </>
               )}

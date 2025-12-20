@@ -20,6 +20,11 @@ export interface TwitterOAuthConfig {
   scopes?: string[];
 }
 
+export interface AuthorizationUrlOptions {
+  /** Force Twitter to show the account selection screen (useful for account switching) */
+  forceVerify?: boolean;
+}
+
 export class TwitterOAuthService {
   private config: TwitterOAuthConfig;
 
@@ -58,12 +63,22 @@ export class TwitterOAuthService {
    * even if the user is already logged into Twitter. This is a security feature by Twitter.
    * After the first authorization, subsequent authorizations should skip the login screen
    * if the user is still logged in and has previously authorized the app.
+   * 
+   * @param options.forceVerify - When true, clears all cached OAuth state to force a fresh login.
+   *                              This is useful for account switching scenarios.
    */
-  async getAuthorizationUrl(): Promise<{
+  async getAuthorizationUrl(options?: AuthorizationUrlOptions): Promise<{
     url: string;
     codeVerifier: string;
     state: string;
   }> {
+    const { forceVerify = false } = options || {};
+    
+    // If forceVerify is true, clear all stored OAuth data first
+    if (forceVerify) {
+      console.log('🔄 Force verify enabled - clearing all OAuth state for account switch');
+      this.clearStoredData();
+    }
     // Check if there's already an active OAuth flow to prevent loops
     const activeFlowId = sessionStorage.getItem('twitter_oauth_active_flow');
     const activeFlowTimestamp = sessionStorage.getItem('twitter_oauth_active_flow_timestamp');
@@ -214,6 +229,29 @@ export class TwitterOAuthService {
     // Also clear sessionStorage flow tracking
     sessionStorage.removeItem('twitter_oauth_active_flow');
     sessionStorage.removeItem('twitter_oauth_active_flow_timestamp');
+    // Clear redirect loop tracking
+    sessionStorage.removeItem('twitter_callback_redirect_count');
+    sessionStorage.removeItem('twitter_callback_redirect_timestamp');
+    // Clear last known Twitter user (for account switching detection)
+    sessionStorage.removeItem('sona_last_twitter_user');
+  }
+
+  /**
+   * Prepare for account switch by clearing all OAuth state
+   * and returning a fresh authorization URL with force verify
+   */
+  async getAccountSwitchUrl(): Promise<{
+    url: string;
+    codeVerifier: string;
+    state: string;
+  }> {
+    console.log('🔀 Initiating account switch - clearing all cached state');
+    
+    // Clear all OAuth state first
+    this.clearStoredData();
+    
+    // Get fresh authorization URL
+    return this.getAuthorizationUrl({ forceVerify: true });
   }
 
   /**

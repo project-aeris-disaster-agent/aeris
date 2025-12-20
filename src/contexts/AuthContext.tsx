@@ -12,6 +12,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: any }>;
+  clearOAuthState: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -84,6 +85,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return await AuthService.resetPassword(email);
   };
 
+  const clearOAuthState = () => {
+    AuthService.clearAllOAuthState();
+  };
+
   const value = {
     user,
     session,
@@ -93,6 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signOut,
     logout,
     resetPassword,
+    clearOAuthState,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

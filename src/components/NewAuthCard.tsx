@@ -120,7 +120,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
     }
   };
 
-  const handleTwitterSignIn = async () => {
+  const handleTwitterSignIn = async (forceSwitch: boolean = false) => {
     // Prevent multiple clicks/rapid fire
     if (isTwitterLoading) {
       console.log('Twitter OAuth already in progress, ignoring click');
@@ -137,14 +137,22 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
       setIsTwitterLoading(true);
       const oauthService = getTwitterOAuthService();
       
-      // Check if there's already an OAuth flow in progress (stored state exists)
-      const existingState = oauthService.getStoredState();
-      if (existingState) {
-        console.warn('⚠️ Existing OAuth flow detected. Clearing old state before starting new flow.');
-        oauthService.clearStoredData();
-      }
+      // Always clear existing OAuth state before starting a new flow
+      // This prevents stale state issues when switching accounts
+      oauthService.clearStoredData();
       
-      const { url } = await oauthService.getAuthorizationUrl();
+      // If forceSwitch is true, use the account switch URL
+      // This clears all state and prepares for a fresh OAuth flow
+      const { url } = forceSwitch 
+        ? await oauthService.getAccountSwitchUrl()
+        : await oauthService.getAuthorizationUrl({ forceVerify: false });
+      
+      // Log for debugging account switch issues
+      console.log('🔐 Initiating Twitter OAuth:', {
+        forceSwitch,
+        timestamp: Date.now(),
+        url: url.substring(0, 80) + '...',
+      });
       
       // Small delay to ensure state is saved before redirect
       await new Promise(resolve => setTimeout(resolve, 150));
@@ -156,8 +164,15 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
       console.error('Twitter sign-in error:', error);
       setIsTwitterLoading(false);
       // Show error to user
-      showError('Failed to initiate Twitter sign-in. Please check your environment variables.');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to initiate Twitter sign-in.';
+      showError(errorMessage);
     }
+  };
+  
+  // Handler specifically for switching Twitter accounts
+  const handleSwitchAccount = async () => {
+    console.log('🔀 User requested account switch');
+    await handleTwitterSignIn(true);
   };
 
   return (
@@ -730,7 +745,7 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 type="button"
-                onClick={handleTwitterSignIn}
+                onClick={() => handleTwitterSignIn(false)}
                 disabled={isTwitterLoading}
                 className="w-full relative group/twitter mt-3"
               >
@@ -761,6 +776,18 @@ export function NewAuthCard({ onSuccess }: NewAuthCardProps) {
                   />
                 </div>
               </motion.button>
+
+              {/* Switch Account Helper - For users having trouble switching Twitter accounts */}
+              <div className="text-center mt-2">
+                <button
+                  type="button"
+                  onClick={handleSwitchAccount}
+                  disabled={isTwitterLoading}
+                  className="text-[10px] text-white/40 hover:text-white/70 transition-colors duration-200 disabled:opacity-50"
+                >
+                  Trouble switching accounts? Click here to reset
+                </button>
+              </div>
 
               {/* Toggle between login/signup */}
               <motion.p 

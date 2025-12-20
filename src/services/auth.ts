@@ -209,6 +209,34 @@ export class AuthService {
   }
 
   /**
+   * Clear all OAuth-related state from storage
+   * This ensures a clean slate for account switching
+   */
+  static clearAllOAuthState(): void {
+    if (typeof window === 'undefined') return;
+    
+    console.log('🧹 Clearing all OAuth state...');
+    
+    // Clear localStorage OAuth data (PKCE verifier, state, timestamp)
+    localStorage.removeItem('twitter_code_verifier');
+    localStorage.removeItem('twitter_state');
+    localStorage.removeItem('twitter_oauth_timestamp');
+    
+    // Clear sessionStorage OAuth flow tracking
+    sessionStorage.removeItem('twitter_code_verifier');
+    sessionStorage.removeItem('twitter_state');
+    sessionStorage.removeItem('twitter_oauth_active_flow');
+    sessionStorage.removeItem('twitter_oauth_active_flow_timestamp');
+    sessionStorage.removeItem('twitter_callback_redirect_count');
+    sessionStorage.removeItem('twitter_callback_redirect_timestamp');
+    
+    // Clear any auth-related flags
+    sessionStorage.removeItem('sona_last_twitter_user');
+    
+    console.log('✅ All OAuth state cleared');
+  }
+
+  /**
    * Logout - Clears Twitter data and signs out the user
    */
   static async logout(): Promise<{ error: any }> {
@@ -233,11 +261,8 @@ export class AuthService {
       }
     }
 
-    // Clear Twitter OAuth sessionStorage data
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('twitter_code_verifier');
-      sessionStorage.removeItem('twitter_state');
-    }
+    // Clear ALL OAuth state from both localStorage and sessionStorage
+    AuthService.clearAllOAuthState();
 
     // Sign out from Supabase
     const { error } = await supabase.auth.signOut();
