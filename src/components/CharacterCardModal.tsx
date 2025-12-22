@@ -415,25 +415,39 @@ export function CharacterCardModal({
 
     setState('saving');
     try {
+      const generationMetadata = {
+        twitter_username: twitterProfile?.username,
+        twitter_metrics: twitterProfile ? {
+          followers_count: twitterProfile.followers_count,
+          following_count: twitterProfile.following_count,
+          tweet_count: twitterProfile.tweet_count,
+        } : null,
+        profile_scores: profileScores,
+        generated_at: new Date().toISOString(),
+      };
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CharacterCardModal.tsx:428',message:'saving metadata',data:{generationMetadata:generationMetadata,hasTwitterMetrics:!!generationMetadata.twitter_metrics,hasProfileScores:!!generationMetadata.profile_scores},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,E'})}).catch(()=>{});
+      // #endregion
+      
       await saveCharacterCard(userId, editedCard, {
         generatedBy: 'grok_api',
-        generationMetadata: {
-          twitter_username: twitterProfile?.username,
-          twitter_metrics: twitterProfile ? {
-            followers_count: twitterProfile.followers_count,
-            following_count: twitterProfile.following_count,
-            tweet_count: twitterProfile.tweet_count,
-          } : null,
-          profile_scores: profileScores,
-          generated_at: new Date().toISOString(),
-        },
+        generationMetadata: generationMetadata,
       });
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CharacterCardModal.tsx:439',message:'save completed',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,E'})}).catch(()=>{});
+      // #endregion
+      
       setState('saved');
       onSuccess?.(editedCard, twitterProfile || undefined, profileScores || undefined);
     } catch (err: any) {
       console.error('Save failed:', err);
       setError(err.message || 'Failed to save character card');
       setState('error');
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CharacterCardModal.tsx:445',message:'save failed',data:{error:err.message||String(err)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,E'})}).catch(()=>{});
+      // #endregion
     }
   };
 

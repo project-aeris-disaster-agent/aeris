@@ -149,12 +149,20 @@ export async function saveCharacterCard(
  * Get the active character card for a user
  */
 export async function getCharacterCard(userId: string): Promise<CharacterCardRecord | null> {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'characterCardService.ts:152',message:'getCharacterCard entry',data:{userId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
+  
   const { data, error } = await db
     .from('character_cards')
     .select('*')
     .eq('user_id', userId)
     .eq('is_active', true)
     .maybeSingle();
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'characterCardService.ts:160',message:'getCharacterCard result',data:{hasData:!!data,hasError:!!error,errorMessage:error?.message,hasGenerationMetadata:!!data?.generation_metadata,generationMetadataType:typeof data?.generation_metadata,generationMetadataKeys:data?.generation_metadata?Object.keys(data.generation_metadata):null,fullGenerationMetadata:data?.generation_metadata?JSON.stringify(data.generation_metadata):null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,E'})}).catch(()=>{});
+  // #endregion
 
   if (error) {
     throw new Error(`Failed to fetch character card: ${error.message}`);

@@ -175,3 +175,65 @@ export async function refreshAccessToken(
   return await response.json();
 }
 
+/**
+ * Fetch Twitter user metrics (followers, following, tweet count)
+ * Uses Edge Function to avoid CORS issues
+ */
+export async function fetchTwitterMetrics(accessToken: string): Promise<{
+  followers_count: number;
+  following_count: number;
+  tweet_count: number;
+} | null> {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'twitterApi.ts:178',message:'fetchTwitterMetrics entry',data:{hasAccessToken:!!accessToken},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+  // #endregion
+  
+  try {
+    const edgeFunctionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/fetch-twitter-metrics`;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'twitterApi.ts:184',message:'calling edge function',data:{edgeFunctionUrl},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+    // #endregion
+    
+    const response = await fetch(edgeFunctionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        access_token: accessToken,
+      }),
+    });
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'twitterApi.ts:199',message:'edge function response',data:{status:response.status,statusText:response.statusText,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+    // #endregion
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to fetch Twitter metrics' }));
+      console.warn('Failed to fetch Twitter metrics:', response.status, error);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'twitterApi.ts:205',message:'edge function error',data:{status:response.status,error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+      // #endregion
+      return null;
+    }
+
+    const data = await response.json();
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'twitterApi.ts:211',message:'edge function success',data:{metrics:data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+    // #endregion
+    return {
+      followers_count: data.followers_count || 0,
+      following_count: data.following_count || 0,
+      tweet_count: data.tweet_count || 0,
+    };
+  } catch (error) {
+    console.warn('Error fetching Twitter metrics:', error);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'twitterApi.ts:220',message:'fetchTwitterMetrics exception',data:{error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+    // #endregion
+    return null;
+  }
+}
+

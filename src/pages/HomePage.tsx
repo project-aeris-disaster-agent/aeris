@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { supabase } from '@/lib/supabase';
 import { getCharacterCard } from '@/services/characterCardService';
+import { fetchTwitterMetrics } from '@/services/twitterApi';
 import { 
   sendMessage as sendChatMessage, 
   getOrCreateSession, 
@@ -133,6 +134,10 @@ export function HomePage() {
         return;
       }
 
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:131',message:'fetchUserData entry',data:{userId:user.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
+      // #endregion
+
       try {
         // Fetch profile AND character card in PARALLEL using Promise.allSettled
         const [profileResult, cardResult] = await Promise.allSettled([
@@ -144,7 +149,12 @@ export function HomePage() {
           getCharacterCard(user.id)
         ]);
 
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:145',message:'cardResult status',data:{cardResultStatus:cardResult.status,cardResultValue:cardResult.status==='fulfilled'?!!cardResult.value:null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+
         // Process profile result
+        let loadedProfile: UserProfile | null = null;
         if (profileResult.status === 'fulfilled') {
           const { data: profile, error } = profileResult.value;
           
@@ -154,6 +164,7 @@ export function HomePage() {
           
           if (profile) {
             const typedProfile = profile as unknown as UserProfile;
+            loadedProfile = typedProfile;
             setUserProfile(typedProfile);
             setHasAlterEgo(typedProfile.character_card_generated || false);
           } else {
@@ -168,19 +179,70 @@ export function HomePage() {
           const card = cardResult.value;
           setCharacterCard(card.card_data);
           
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:180',message:'metadata before extraction',data:{hasMetadata:!!card.generation_metadata,metadataType:typeof card.generation_metadata,metadataKeys:card.generation_metadata?Object.keys(card.generation_metadata):null,fullMetadata:JSON.stringify(card.generation_metadata)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,E'})}).catch(()=>{});
+          // #endregion
+          
           // Extract metrics and scores from generation_metadata
           const metadata = card.generation_metadata as any;
-          if (metadata?.twitter_metrics) {
-            setTwitterMetrics(metadata.twitter_metrics);
-          }
+          
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:195',message:'metadata extraction checks',data:{hasTwitterMetrics:!!metadata?.twitter_metrics,hasProfileScores:!!metadata?.profile_scores,twitterMetricsValue:metadata?.twitter_metrics,profileScoresValue:metadata?.profile_scores},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+          // #endregion
+          
+          // Set profile scores if available
           if (metadata?.profile_scores) {
             setProfileScores(metadata.profile_scores);
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:204',message:'profileScores set',data:{profileScores:metadata.profile_scores},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
           }
+          
+          // Handle Twitter metrics: use cached if available, otherwise fetch fresh
+          if (metadata?.twitter_metrics) {
+            setTwitterMetrics(metadata.twitter_metrics);
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:209',message:'twitterMetrics set from cache',data:{twitterMetrics:metadata.twitter_metrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
+          } else if (loadedProfile?.twitter_access_token) {
+            // Fetch fresh metrics from Twitter API if we have access token
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:212',message:'fetching fresh twitter metrics',data:{hasAccessToken:!!loadedProfile.twitter_access_token},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+            // #endregion
+            try {
+              const freshMetrics = await fetchTwitterMetrics(loadedProfile.twitter_access_token);
+              if (freshMetrics) {
+                setTwitterMetrics(freshMetrics);
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:218',message:'twitterMetrics set from API',data:{twitterMetrics:freshMetrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+                // #endregion
+              } else {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:222',message:'failed to fetch twitter metrics',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+                // #endregion
+              }
+            } catch (error) {
+              console.warn('Failed to fetch Twitter metrics:', error);
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:227',message:'error fetching twitter metrics',data:{error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+              // #endregion
+            }
+          }
+        } else {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:184',message:'cardResult not fulfilled or no card',data:{cardResultStatus:cardResult.status,cardResultReason:cardResult.status==='rejected'?cardResult.reason:null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+          // #endregion
         }
       } catch (err) {
         console.error('Error in fetchUserData:', err);
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:188',message:'fetchUserData error',data:{error:err instanceof Error?err.message:String(err)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
+        // #endregion
       } finally {
         setIsLoadingProfile(false);
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:191',message:'fetchUserData exit',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
+        // #endregion
       }
     }
 

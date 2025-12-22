@@ -47,7 +47,7 @@ export function AuthPage() {
         </div>
         
         {/* Web Image Logo - positioned below signup card */}
-        <div className="mb-4 sm:mb-6 z-50 flex justify-center md:justify-start md:translate-x-[5%]">
+        <div className="mb-4 sm:mb-6 z-10 flex justify-center md:justify-start md:translate-x-[5%]">
           <img 
             src="/sona-webimage2.svg" 
             alt="SONA Web Image" 
