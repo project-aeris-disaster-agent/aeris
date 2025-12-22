@@ -12,12 +12,8 @@
   ],
   "crons": [
     {
-      "path": "/api/cron/process-posts",
-      "schedule": "0 9 * * *"
-    },
-    {
       "path": "/api/cron/process-agent",
-      "schedule": "0 10 * * *"
+      "schedule": "0 */6 * * *"
     }
   ]
 }

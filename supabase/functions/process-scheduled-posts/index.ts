@@ -407,6 +407,10 @@ async function processPost(
 }
 
 serve(async (req) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:409',message:'Edge function serve called',data:{method:req.method,url:req.url,hasCronSecret:!!CRON_SECRET},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
+
   // CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -431,6 +435,9 @@ serve(async (req) => {
     
     // Trim whitespace and compare
     if (authHeader.trim() !== expectedHeader.trim()) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:433',message:'Auth mismatch in edge function',data:{received:authHeader?.substring(0,30),expected:expectedHeader?.substring(0,30)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
       console.error('Auth mismatch:', {
         received: authHeader,
         expected: expectedHeader,
@@ -459,6 +466,11 @@ serve(async (req) => {
   try {
     const supabaseAdmin = createSupabaseAdmin();
     const nowIso = new Date().toISOString();
+    const nowDate = new Date();
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:461',message:'Edge function called',data:{nowIso,nowDate:nowDate.toISOString(),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     // Fetch all pending posts that are due
     const { data: pendingPosts, error: fetchError } = await supabaseAdmin
@@ -469,6 +481,10 @@ serve(async (req) => {
       .order('scheduled_for', { ascending: true })
       .limit(20);
 
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:471',message:'Query executed',data:{pendingPostsCount:pendingPosts?.length||0,hasError:!!fetchError,errorMessage:fetchError?.message,queryTime:nowIso},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
+
     if (fetchError) {
       console.error('Failed to fetch scheduled posts:', fetchError);
       return new Response(JSON.stringify({ error: 'fetch_failed', details: fetchError.message }), {
@@ -478,19 +494,33 @@ serve(async (req) => {
     }
 
     if (!pendingPosts || pendingPosts.length === 0) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:480',message:'No pending posts found',data:{nowIso,queryTime:nowIso},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
       return new Response(JSON.stringify({ processed: 0, results: [] }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    // #region agent log
+    const scheduledTimes = pendingPosts.map((p: ScheduledPostRow) => ({id:p.id,type:p.post_type,scheduledFor:p.scheduled_for,isDue:new Date(p.scheduled_for)<=new Date()}));
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:487',message:'Found pending posts',data:{count:pendingPosts.length,posts:scheduledTimes,nowIso},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
+
     console.log(`Processing ${pendingPosts.length} scheduled posts...`);
 
     const results: ProcessResult[] = [];
 
     for (const post of pendingPosts as ScheduledPostRow[]) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:492',message:'Processing post',data:{postId:post.id,postType:post.post_type,scheduledFor:post.scheduled_for,nowIso},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       console.log(`Processing post ${post.id} (${post.post_type})...`);
       const result = await processPost(supabaseAdmin, post);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:495',message:'Post processed',data:{postId:post.id,status:result.status,error:result.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       results.push(result);
       console.log(`Post ${post.id} result: ${result.status}`);
     }

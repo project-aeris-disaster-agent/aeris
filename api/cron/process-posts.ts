@@ -7,12 +7,23 @@ export const config = {
 };
 
 export default async function handler(req: Request): Promise<Response> {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api/cron/process-posts.ts:9',message:'Cron handler called',data:{method:req.method,url:req.url,hasAuthHeader:!!req.headers.get('authorization')},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
+
   // Verify Vercel cron secret (Vercel sends this automatically for cron jobs)
   const authHeader = req.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api/cron/process-posts.ts:15',message:'Auth check',data:{hasCronSecret:!!cronSecret,hasAuthHeader:!!authHeader,authHeaderMatch:authHeader===`Bearer ${cronSecret}`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+  // #endregion
+
   // Allow requests from Vercel Cron (they include the secret) or authenticated requests
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api/cron/process-posts.ts:20',message:'Auth failed',data:{received:authHeader?.substring(0,20),expected:`Bearer ${cronSecret?.substring(0,10)}...`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
     console.error('Unauthorized cron request');
     return new Response(
       JSON.stringify({ error: 'Unauthorized' }),
@@ -24,6 +35,10 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api/cron/process-posts.ts:28',message:'Before edge function call',data:{hasSupabaseUrl:!!supabaseUrl,edgeFunctionUrl:`${supabaseUrl}/functions/v1/process-scheduled-posts`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+  // #endregion
 
   if (!supabaseUrl) {
     console.error('Missing SUPABASE_URL environment variable');
@@ -49,7 +64,15 @@ export default async function handler(req: Request): Promise<Response> {
       }
     );
 
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api/cron/process-posts.ts:52',message:'Edge function response',data:{status:response.status,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+    // #endregion
+
     const result = await response.json();
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api/cron/process-posts.ts:56',message:'Edge function result',data:{processed:result.processed,succeeded:result.succeeded,failed:result.failed,resultsCount:result.results?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     console.log('Process scheduled posts result:', {
       status: response.status,

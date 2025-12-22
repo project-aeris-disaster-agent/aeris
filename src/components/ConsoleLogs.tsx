@@ -17,6 +17,9 @@ import {
   MessageSquare,
   Repeat2,
   Heart,
+  ExternalLink,
+  History,
+  XCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { ScheduledPostsRow, ScheduledPostType } from '@/types/database';
@@ -70,9 +73,10 @@ const ACTION_CONFIG: Record<ScheduledPostType, { icon: typeof Send; color: strin
 };
 
 export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: ConsoleLogsProps) {
-  const [activeTab, setActiveTab] = useState<'tasks' | 'status' | 'errors' | 'report'>('tasks');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'history' | 'status' | 'errors' | 'report'>('tasks');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [ongoingTasks, setOngoingTasks] = useState<ScheduledPostsRow[]>([]);
+  const [completedTasks, setCompletedTasks] = useState<ScheduledPostsRow[]>([]);
   const [connectivityStatus, setConnectivityStatus] = useState<ConnectivityStatus>({
     twitter: { status: 'checking', lastChecked: null },
     agent: { status: 'checking', enabled: false, lastRun: null, pendingActions: 0 },
@@ -99,7 +103,8 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
   const fetchOngoingTasks = async () => {
     if (!userId) return;
     try {
-      const { data, error } = await db
+      // Fetch pending tasks
+      const { data: pending, error: pendingError } = await db
         .from('scheduled_posts')
         .select('*')
         .eq('user_id', userId)
@@ -107,8 +112,21 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
         .order('scheduled_for', { ascending: true })
         .limit(50);
 
-      if (error) throw error;
-      setOngoingTasks(data || []);
+      if (pendingError) throw pendingError;
+      setOngoingTasks(pending || []);
+      
+      // Fetch completed tasks (posted + failed)
+      const { data: completed, error: completedError } = await db
+        .from('scheduled_posts')
+        .select('*')
+        .eq('user_id', userId)
+        .in('status', ['posted', 'failed'])
+        .order('posted_at', { ascending: false, nullsFirst: false })
+        .order('scheduled_for', { ascending: false })
+        .limit(100);
+
+      if (completedError) throw completedError;
+      setCompletedTasks(completed || []);
       
       // Load agent settings and calculate predicted actions
       const settings = await getAgentSettings(userId);
@@ -120,8 +138,25 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
         setPredictedActions([]);
       }
     } catch (error) {
-      console.error('Failed to fetch ongoing tasks:', error);
+      console.error('Failed to fetch tasks:', error);
     }
+  };
+
+  // Generate Twitter link for a post
+  const getTwitterLink = (post: ScheduledPostsRow): string | null => {
+    const metadata = post.post_metadata as Record<string, unknown> | null;
+    const twitterPostId = metadata?.twitter_post_id as string;
+    
+    if (twitterPostId) {
+      return `https://x.com/i/status/${twitterPostId}`;
+    }
+    
+    // For retweet/like, link to the target tweet
+    if (post.target_tweet_id && (post.post_type === 'retweet' || post.post_type === 'like')) {
+      return `https://x.com/i/status/${post.target_tweet_id}`;
+    }
+    
+    return null;
   };
 
   // Check connectivity status
@@ -325,19 +360,20 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
             </div>
 
             {/* Tabs */}
-            <div className="flex items-center gap-1 px-6 py-3 border-b border-white/10 bg-black/40">
+            <div className="flex items-center gap-1 px-6 py-3 border-b border-white/10 bg-black/40 overflow-x-auto">
               {[
-                { id: 'tasks' as const, label: 'Ongoing Tasks', icon: Calendar },
+                { id: 'tasks' as const, label: 'Pending', icon: Calendar, count: ongoingTasks.length },
+                { id: 'history' as const, label: 'History', icon: History, count: completedTasks.length },
                 { id: 'status' as const, label: 'Status', icon: Activity },
-                { id: 'errors' as const, label: 'Errors', icon: AlertCircle },
-                { id: 'report' as const, label: 'Send Report', icon: Send },
+                { id: 'errors' as const, label: 'Errors', icon: AlertCircle, count: errorLogs.length },
+                { id: 'report' as const, label: 'Report', icon: Send },
               ].map((tab) => {
                 const Icon = tab.icon;
                 return (
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors whitespace-nowrap ${
                       activeTab === tab.id
                         ? 'bg-white/10 text-white border border-white/20'
                         : 'text-white/50 hover:text-white/70 hover:bg-white/5'
@@ -345,6 +381,13 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                   >
                     <Icon className="w-4 h-4" />
                     <span className="text-sm font-medium">{tab.label}</span>
+                    {'count' in tab && tab.count !== undefined && tab.count > 0 && (
+                      <span className={`px-1.5 py-0.5 rounded-full text-xs ${
+                        tab.id === 'errors' ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white/60'
+                      }`}>
+                        {tab.count}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -524,6 +567,116 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                       </div>
                     );
                   })()}
+                </div>
+              )}
+
+              {/* Activity History Tab */}
+              {activeTab === 'history' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-white font-semibold">Activity History</h3>
+                    <div className="flex items-center gap-3">
+                      <span className="text-green-400 text-sm">
+                        {completedTasks.filter(t => t.status === 'posted').length} success
+                      </span>
+                      <span className="text-red-400 text-sm">
+                        {completedTasks.filter(t => t.status === 'failed').length} failed
+                      </span>
+                    </div>
+                  </div>
+                  {completedTasks.length === 0 ? (
+                    <div className="text-center py-12">
+                      <History className="w-12 h-12 text-white/20 mx-auto mb-3" />
+                      <p className="text-white/50 text-sm">No activity history</p>
+                      <p className="text-white/30 text-xs mt-1">Completed actions will appear here with links</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {completedTasks.map((task) => {
+                        const config = ACTION_CONFIG[task.post_type] || ACTION_CONFIG.tweet;
+                        const Icon = config.icon;
+                        const sourceLabel = getSourceLabel(task);
+                        const isAgent = sourceLabel === 'Agent';
+                        const isSuccess = task.status === 'posted';
+                        const twitterLink = getTwitterLink(task);
+                        const metadata = task.post_metadata as Record<string, unknown> | null;
+                        const targetAccount = metadata?.target_account as string;
+
+                        return (
+                          <div
+                            key={task.id}
+                            className={`p-4 rounded-xl border ${
+                              isSuccess
+                                ? 'bg-green-500/5 border-green-500/20'
+                                : 'bg-red-500/5 border-red-500/20'
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className={`p-2 rounded-lg ${
+                                isSuccess ? 'bg-green-500/20' : 'bg-red-500/20'
+                              }`}>
+                                {isSuccess ? (
+                                  <CheckCircle2 className="w-4 h-4 text-green-400" />
+                                ) : (
+                                  <XCircle className="w-4 h-4 text-red-400" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                  <Icon className={`w-4 h-4 ${config.color}`} />
+                                  <span className={`text-sm font-medium ${config.color}`}>
+                                    {config.label}
+                                  </span>
+                                  {targetAccount && (
+                                    <span className="text-white/50 text-xs">@{targetAccount}</span>
+                                  )}
+                                  {isAgent && (
+                                    <span className="px-2 py-0.5 rounded text-xs bg-green-500/20 text-green-400">
+                                      Agent
+                                    </span>
+                                  )}
+                                  <span className={`px-2 py-0.5 rounded text-xs ${
+                                    isSuccess ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                                  }`}>
+                                    {isSuccess ? 'Success' : 'Failed'}
+                                  </span>
+                                </div>
+                                {task.content && (
+                                  <p className="text-white/70 text-sm mb-2 line-clamp-2">
+                                    {task.content}
+                                  </p>
+                                )}
+                                {!isSuccess && task.error_message && (
+                                  <p className="text-red-400/80 text-xs mb-2">
+                                    Error: {task.error_message}
+                                  </p>
+                                )}
+                                <div className="flex items-center gap-4 text-white/40 text-xs">
+                                  <div className="flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    <span>{formatTime(task.posted_at ? new Date(task.posted_at) : new Date(task.scheduled_for))}</span>
+                                  </div>
+                                  <span>{new Date(task.posted_at || task.scheduled_for).toLocaleString()}</span>
+                                  {twitterLink && isSuccess && (
+                                    <a
+                                      href={twitterLink}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 ml-auto"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <ExternalLink className="w-3 h-3" />
+                                      View on X
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
