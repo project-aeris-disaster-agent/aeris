@@ -72,6 +72,13 @@ export function AutomationQueue({ userId, isVisible = true }: AutomationQueuePro
         .limit(50);
 
       if (error) throw error;
+      
+      // #region agent log
+      const now = new Date();
+      const overdueCount = (data || []).filter((p: ScheduledPostsRow) => new Date(p.scheduled_for) <= now).length;
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/components/AutomationQueue.tsx:fetchScheduledPosts',message:'Fetched pending posts',data:{pendingCount:data?.length||0,overdueCount,nowIso:now.toISOString(),posts:(data||[]).slice(0,5).map((p: ScheduledPostsRow)=>({id:p.id,type:p.post_type,scheduledFor:p.scheduled_for,isOverdue:new Date(p.scheduled_for)<=now,generatedBy:(p.post_metadata as Record<string,unknown>)?.generated_by}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+      
       setScheduledPosts(data || []);
     } catch (error) {
       console.error('Failed to fetch scheduled posts:', error);
@@ -95,6 +102,14 @@ export function AutomationQueue({ userId, isVisible = true }: AutomationQueuePro
         .limit(50);
 
       if (error) throw error;
+      
+      // #region agent log
+      const successCount = (data || []).filter((p: ScheduledPostsRow) => p.status === 'posted').length;
+      const failCount = (data || []).filter((p: ScheduledPostsRow) => p.status === 'failed').length;
+      const agentModeCount = (data || []).filter((p: ScheduledPostsRow) => (p.post_metadata as Record<string,unknown>)?.generated_by === 'agent_mode').length;
+      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/components/AutomationQueue.tsx:fetchCompletedPosts',message:'Fetched completed posts',data:{totalCompleted:data?.length||0,successCount,failCount,agentModeCount,recentPosts:(data||[]).slice(0,5).map((p: ScheduledPostsRow)=>({id:p.id,type:p.post_type,status:p.status,postedAt:p.posted_at,errorMessage:p.error_message,generatedBy:(p.post_metadata as Record<string,unknown>)?.generated_by}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      
       setCompletedPosts(data || []);
     } catch (error) {
       console.error('Failed to fetch completed posts:', error);

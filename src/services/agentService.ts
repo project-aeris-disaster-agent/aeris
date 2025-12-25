@@ -33,8 +33,16 @@ export async function getAgentSettings(userId: string): Promise<AgentSettings> {
 
   if (error) {
     console.error('Failed to fetch agent settings:', error);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:getAgentSettings:error',message:'Failed to fetch agent settings',data:{userId,errorMessage:error.message,errorCode:error.code},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     return DEFAULT_AGENT_SETTINGS;
   }
+
+  // #region agent log
+  const settings = data?.agent_settings || DEFAULT_AGENT_SETTINGS;
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:getAgentSettings:success',message:'Agent settings loaded',data:{userId,enabled:settings.enabled,targetAccountsCount:settings.targetAccounts?.length||0,actions:settings.actions,frequency:settings.frequency,lastRunAt:settings.lastRunAt,hasData:!!data?.agent_settings},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
 
   return data?.agent_settings || DEFAULT_AGENT_SETTINGS;
 }
@@ -357,6 +365,10 @@ export interface PredictedAgentAction {
 export function calculatePredictedAgentActions(
   settings: AgentSettings
 ): PredictedAgentAction[] {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:calculatePredictedAgentActions:entry',message:'Calculating predicted actions',data:{enabled:settings.enabled,targetAccountsCount:settings.targetAccounts?.length||0,actions:settings.actions,frequency:settings.frequency,lastRunAt:settings.lastRunAt,shouldRunResult:shouldRunAgent(settings)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
+
   if (!settings.enabled || settings.targetAccounts.length === 0) {
     return [];
   }
@@ -429,6 +441,10 @@ export async function getAgentActivityStats(userId: string): Promise<AgentActivi
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
 
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:getAgentActivityStats',message:'Fetching agent stats',data:{userId,nowIso:now.toISOString()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
+
   // Get pending actions
   const { data: pendingData } = await db
     .from('scheduled_posts')
@@ -470,6 +486,10 @@ export async function getAgentActivityStats(userId: string): Promise<AgentActivi
 
   // Get agent settings for lastRunAt
   const settings = await getAgentSettings(userId);
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:getAgentActivityStats:return',message:'Agent stats fetched',data:{pendingActionsCount:pendingData?.length||0,scheduledTodayCount:scheduledTodayData?.length||0,executedTodayCount:executedTodayData?.length||0,failedTodayCount:failedTodayData?.length||0,nextScheduledFor:pendingData?.[0]?.scheduled_for,lastRunAt:settings.lastRunAt,agentEnabled:settings.enabled,targetAccounts:settings.targetAccounts,actions:settings.actions},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
 
   return {
     pendingActions: pendingData?.length || 0,
