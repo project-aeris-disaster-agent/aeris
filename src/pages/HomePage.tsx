@@ -24,7 +24,6 @@ import {
   Send, 
   Sparkles, 
   Settings, 
-  MessageSquare,
   Twitter,
   Users,
   Heart,
