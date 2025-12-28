@@ -13,7 +13,10 @@ import { fetchTwitterMetrics } from '@/services/twitterApi';
 import { 
   sendMessage as sendChatMessage, 
   getOrCreateSession, 
-  getSessionMessages
+  getSessionMessages,
+  clearChatHistory,
+  startNewSession,
+  PersonalityMetadata
 } from '@/services/chatService';
 import type { ElizaOSCharacterCard, ProfileScores, LetterGrade } from '@/types/database';
 import { getAgentSettings } from '@/services/agentService';
@@ -30,7 +33,9 @@ import {
   Zap,
   Bot,
   LogOut,
-  Award
+  Award,
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import { AutomationDropdown } from '@/components/AutomationDropdown';
 import { GoogleCalendarWidget } from '@/components/GoogleCalendarWidget';
@@ -120,11 +125,14 @@ export function HomePage() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [twitterMetrics, setTwitterMetrics] = useState<TwitterMetricsState | null>(null);
   const [profileScores, setProfileScores] = useState<ProfileScores | null>(null);
+  const [personalityMetadata, setPersonalityMetadata] = useState<PersonalityMetadata | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [agentModeEnabled, setAgentModeEnabled] = useState(false);
   const [isConsoleLogsOpen, setIsConsoleLogsOpen] = useState(false);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   // Fetch user profile and character card status
   useEffect(() => {
@@ -196,6 +204,17 @@ export function HomePage() {
             // #region agent log
             fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:204',message:'profileScores set',data:{profileScores:metadata.profile_scores},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
             // #endregion
+          }
+          
+          // Extract personality metadata for human-like chat responses
+          if (metadata?.analysis_summary || metadata?.signaturePhrases) {
+            const personalityData: PersonalityMetadata = {
+              signaturePhrases: metadata.signaturePhrases || metadata.analysis_summary?.signature_phrases || [],
+              emojiPatterns: metadata.emojiPatterns || metadata.analysis_summary?.emoji_patterns || [],
+              humorStyle: metadata.humorStyle || metadata.analysis_summary?.humor_style || '',
+              vocabularyLevel: metadata.vocabularyLevel || metadata.analysis_summary?.vocabulary_level || '',
+            };
+            setPersonalityMetadata(personalityData);
           }
           
           // Handle Twitter metrics: use cached if available, otherwise fetch fresh
@@ -305,9 +324,19 @@ export function HomePage() {
     initChatSession();
   }, [user?.id, hasAlterEgo, sessionId]);
 
+  // Scroll to top on initial page load
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    window.scrollTo(0, 0);
+  }, []);
+
+  // Scroll chat container to bottom only after user has interacted (sent a message)
+  // This prevents the page from scrolling down on initial load
+  useEffect(() => {
+    if (hasUserInteracted && chatContainerRef.current) {
+      // Scroll only the chat container, not the whole page
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [messages, hasUserInteracted]);
 
   // Track modal mode
   const [modalMode, setModalMode] = useState<'generate' | 'edit'>('generate');
@@ -386,6 +415,9 @@ export function HomePage() {
     if (!inputValue.trim()) return;
     if (!user?.id) return;
     
+    // Mark that user has interacted - enables chat auto-scroll
+    setHasUserInteracted(true);
+    
     // If no character card, show placeholder response
     if (!characterCard) {
       const userMessage: Message = {
@@ -435,12 +467,13 @@ export function HomePage() {
     setIsTyping(true);
 
     try {
-      // Send message to AI clone via Edge Function
+      // Send message to AI clone via Edge Function (with personality metadata for human-like responses)
       const response = await sendChatMessage(
         user.id,
         currentSessionId,
         messageText,
-        characterCard
+        characterCard,
+        personalityMetadata || undefined
       );
 
       if (response.success) {
@@ -495,6 +528,46 @@ export function HomePage() {
       handleSendMessage();
     }
   }, [handleSendMessage]);
+
+  // Clear chat history (keeps session, clears messages)
+  const handleClearChat = useCallback(async () => {
+    if (!sessionId) return;
+    
+    try {
+      await clearChatHistory(sessionId);
+      // Reset to welcome message
+      if (characterCard) {
+        setMessages([getWelcomeMessage(characterCard)]);
+      } else {
+        setMessages([]);
+      }
+      showWarning('Chat cleared! Fresh start. 🧹', 3000);
+    } catch (err) {
+      console.error('Failed to clear chat:', err);
+      showError('Failed to clear chat');
+    }
+  }, [sessionId, characterCard, showWarning, showError]);
+
+  // Start a completely new session
+  const handleNewSession = useCallback(async () => {
+    if (!user?.id) return;
+    
+    try {
+      const newSessionId = await startNewSession(user.id);
+      setSessionId(newSessionId);
+      // Reset to welcome message
+      if (characterCard) {
+        setMessages([getWelcomeMessage(characterCard)]);
+      } else {
+        setMessages([]);
+      }
+      setHasUserInteracted(false);
+      showWarning('New session started! Fresh memory. 🧠', 3000);
+    } catch (err) {
+      console.error('Failed to start new session:', err);
+      showError('Failed to start new session');
+    }
+  }, [user?.id, characterCard, showWarning, showError]);
 
   return (
     <div className="relative min-h-screen w-full overflow-x-hidden">
@@ -760,18 +833,35 @@ export function HomePage() {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  {sessionId && hasAlterEgo && (
+                    <>
+                      <button
+                        onClick={handleClearChat}
+                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
+                        title="Clear chat history"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-white/40 group-hover:text-pink-400 transition-colors" />
+                      </button>
+                      <button
+                        onClick={handleNewSession}
+                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
+                        title="Start new session"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 text-white/40 group-hover:text-cyan-400 transition-colors" />
+                      </button>
+                    </>
+                  )}
                   {sessionId && (
-                    <span className="text-[10px] text-white/20 font-mono">
+                    <span className="text-[10px] text-white/20 font-mono hidden sm:inline">
                       {sessionId.slice(-6)}
                     </span>
                   )}
-                  <MessageSquare className="w-4 h-4 text-white/40" />
                 </div>
               </div>
               
               {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2.5 sm:space-y-3 message-scrollbar">
+              <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2.5 sm:space-y-3 message-scrollbar">
                 <AnimatePresence>
                   {messages.map((message) => (
                     <motion.div

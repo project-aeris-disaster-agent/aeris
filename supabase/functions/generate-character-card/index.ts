@@ -1307,6 +1307,11 @@ Always respond with valid JSON only. Be specific and evidence-based.`;
           method: analysisMethod,
           tweets_analyzed: tweets.length,
           generated_at: new Date().toISOString(),
+          // Personality data for human-like chat responses
+          signaturePhrases: analysis.signaturePhrases,
+          emojiPatterns: analysis.emojiPatterns,
+          humorStyle: analysis.humorStyle,
+          vocabularyLevel: analysis.vocabularyLevel,
           analysis_summary: {
             primary_topics: analysis.primaryTopics,
             core_traits: analysis.coreTraits.map(t => t.trait),

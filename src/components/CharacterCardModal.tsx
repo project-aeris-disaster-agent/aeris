@@ -190,6 +190,10 @@ export function CharacterCardModal({
   const [profileScores, setProfileScores] = useState<ProfileScores | null>(existingScores || null);
   const [analysisMetadata, setAnalysisMetadata] = useState<{
     tweets_analyzed: number;
+    signaturePhrases?: string[];
+    emojiPatterns?: string[];
+    humorStyle?: string;
+    vocabularyLevel?: string;
     analysis_summary?: {
       primary_topics: string[];
       core_traits: string[];
@@ -334,6 +338,10 @@ export function CharacterCardModal({
       setProfileScores(result.profile_scores);
       setAnalysisMetadata({
         tweets_analyzed: result.analysis_metadata.tweets_analyzed,
+        signaturePhrases: result.analysis_metadata.signaturePhrases,
+        emojiPatterns: result.analysis_metadata.emojiPatterns,
+        humorStyle: result.analysis_metadata.humorStyle,
+        vocabularyLevel: result.analysis_metadata.vocabularyLevel,
         analysis_summary: result.analysis_metadata.analysis_summary,
       });
       setState('preview');
@@ -423,6 +431,12 @@ export function CharacterCardModal({
           tweet_count: twitterProfile.tweet_count,
         } : null,
         profile_scores: profileScores,
+        // Personality metadata for human-like chat responses
+        signaturePhrases: analysisMetadata?.signaturePhrases,
+        emojiPatterns: analysisMetadata?.emojiPatterns,
+        humorStyle: analysisMetadata?.humorStyle,
+        vocabularyLevel: analysisMetadata?.vocabularyLevel,
+        analysis_summary: analysisMetadata?.analysis_summary,
         generated_at: new Date().toISOString(),
       };
       

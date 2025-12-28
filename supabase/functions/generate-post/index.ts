@@ -221,10 +221,10 @@ Return ONLY the post text, nothing else.`;
       console.warn(`Warning: Potential invalid mention format detected: ${invalidMentions.join(', ')}`);
     }
 
-    // Extract suggested topics - use custom tags if provided, otherwise use character card topics
+    // Extract suggested topics - use custom tags if provided, otherwise use character card topics (only 1)
     const suggestedTopics = custom_tags && custom_tags.length > 0 
       ? custom_tags 
-      : character_card.topics.slice(0, 3);
+      : character_card.topics.slice(0, 1);
 
     return new Response(
       JSON.stringify({

@@ -76,10 +76,10 @@ export async function generateRecommendedPost(
       throw new Error(data.error || 'Failed to generate post');
     }
 
-    // Use custom tags if provided, otherwise use suggested topics from API or character card
+    // Use custom tags if provided, otherwise use suggested topics from API or character card (only 1)
     const finalTopics = customTags && customTags.length > 0 
       ? customTags 
-      : (data.suggested_topics || characterCard.topics.slice(0, 3));
+      : (data.suggested_topics || characterCard.topics.slice(0, 1));
 
     return {
       content: data.post_content,
@@ -93,10 +93,10 @@ export async function generateRecommendedPost(
     const fallbackTopic = characterCard.topics[0] || 'thoughts';
     const fallbackStyle = characterCard.postExamples[0] || `Just thinking about ${fallbackTopic}...`;
     
-    // Use custom tags if provided in fallback scenario
+    // Use custom tags if provided in fallback scenario (only 1)
     const fallbackTopics = customTags && customTags.length > 0 
       ? customTags 
-      : characterCard.topics.slice(0, 3);
+      : characterCard.topics.slice(0, 1);
 
     return {
       content: fallbackStyle,

@@ -28,6 +28,14 @@ interface CharacterCard {
   postExamples: string[];
 }
 
+// Extended metadata from personality analysis (passed separately)
+interface PersonalityMetadata {
+  signaturePhrases?: string[];
+  emojiPatterns?: string[];
+  humorStyle?: string;
+  vocabularyLevel?: string;
+}
+
 interface ConversationMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -39,88 +47,105 @@ interface ChatRequest {
   message: string;
   character_card: CharacterCard;
   conversation_history: ConversationMessage[];
+  personality_metadata?: PersonalityMetadata;
 }
 
-// Build system prompt from character card
-function buildSystemPrompt(card: CharacterCard): string {
-  const bio = card.bio.join(' ');
-  const lore = card.lore?.join(' ') || '';
-  const knowledge = card.knowledge.join(', ');
-  const topics = card.topics.join(', ');
-  const adjectives = card.adjectives?.join(', ') || '';
-  const styleAll = card.style.all.join(', ');
-  const styleChat = card.style.chat.join(', ');
-
-  // Format example conversations for few-shot learning
-  const exampleConversations = card.messageExamples
+// Build system prompt from character card - aligned with tweet generation voice
+function buildSystemPrompt(card: CharacterCard, metadata?: PersonalityMetadata): string {
+  // Build bio from card bio array
+  const bio = card.bio.slice(0, 3).join(' ');
+  
+  // Get knowledge/expertise
+  const expertise = card.knowledge.slice(0, 5).join(', ');
+  
+  // Get chat style traits
+  const chatStyle = card.style.chat.slice(0, 4).join(', ');
+  const allStyle = card.style.all.slice(0, 3).join(', ');
+  
+  // Get adjectives for personality
+  const adjectives = card.adjectives?.slice(0, 5).join(', ') || 'authentic, engaging';
+  
+  // Get topics
+  const topics = card.topics.slice(0, 5).join(', ');
+  
+  // Get short examples of their CHAT voice (from messageExamples)
+  const chatExamples = card.messageExamples
     .slice(0, 3)
-    .map((convo, idx) => {
-      const formatted = convo
-        .map(msg => {
-          const speaker = msg.user === '{{user1}}' ? 'Human' : card.name;
-          return `${speaker}: ${msg.content.text}`;
-        })
-        .join('\n');
-      return `Example ${idx + 1}:\n${formatted}`;
+    .map(convo => {
+      const assistantMsg = convo.find(m => m.user !== '{{user1}}');
+      if (assistantMsg) {
+        const text = assistantMsg.content.text;
+        return text.length > 80 ? text.substring(0, 80) + '...' : text;
+      }
+      return null;
     })
-    .join('\n\n');
-
-  // Include some post examples to reinforce voice
-  const postVoiceExamples = card.postExamples
-    .slice(0, 5)
-    .map((post, idx) => `${idx + 1}. "${post}"`)
+    .filter(Boolean)
+    .map(t => `• "${t}"`)
     .join('\n');
 
-  return `You are ${card.name}, an authentic AI alter ego with a unique personality and voice.
+  return `You are ${card.name}, an AI alter ego with a unique voice and personality.
 
-═══════════════════════════════════════════════════════════════════════════════
-IDENTITY & BACKGROUND
-═══════════════════════════════════════════════════════════════════════════════
+YOUR IDENTITY:
 ${bio}
 
-${lore ? `Background: ${lore}` : ''}
+YOUR EXPERTISE: ${expertise}
+YOUR INTERESTS: ${topics}
+YOUR VIBE: ${adjectives}
 
-═══════════════════════════════════════════════════════════════════════════════
-EXPERTISE & INTERESTS
-═══════════════════════════════════════════════════════════════════════════════
-Knowledge areas: ${knowledge}
-Topics I discuss: ${topics}
-My personality: ${adjectives}
+CHAT STYLE: ${chatStyle}, ${allStyle}
 
-═══════════════════════════════════════════════════════════════════════════════
-COMMUNICATION STYLE
-═══════════════════════════════════════════════════════════════════════════════
-Overall: ${styleAll}
-In conversations: ${styleChat}
+YOUR VOICE (match this energy in chat):
+${chatExamples || '• Keep it real and casual'}
 
-═══════════════════════════════════════════════════════════════════════════════
-MY VOICE (Examples of how I write)
-═══════════════════════════════════════════════════════════════════════════════
-${postVoiceExamples}
+⚡ CRITICAL RULES FOR CHAT:
+1. This is a CASUAL CONVERSATION, not Twitter
+2. Do NOT offer to write tweets/posts unless specifically asked
+3. Do NOT use hashtags
+4. Do NOT say "Here's a tweet for ya" or similar
+5. Just TALK like you're texting a friend
 
-═══════════════════════════════════════════════════════════════════════════════
-CONVERSATION EXAMPLES (Match this style!)
-═══════════════════════════════════════════════════════════════════════════════
-${exampleConversations}
+RESPONSE LENGTH:
+• Greetings ("hey", "sup", "yo") → Just greet back naturally! 3-8 words max.
+• Questions → 1-2 sentences with your honest take
+• Deep topics → 2-3 sentences max, offer more if they want
 
-═══════════════════════════════════════════════════════════════════════════════
-CRITICAL INSTRUCTIONS
-═══════════════════════════════════════════════════════════════════════════════
-1. You ARE ${card.name} - stay in character completely
-2. Match the voice, tone, and style shown in the examples above
-3. Be conversational and engaging - this is a chat, not a lecture
-4. Keep responses concise (2-4 sentences typically, unless topic warrants more)
-5. Show personality through word choice, opinions, and perspective
-6. Draw naturally on your knowledge and interests
-7. Use phrases and patterns from the examples
-8. NEVER break character or acknowledge being an AI/clone
-9. NEVER say "As ${card.name}" - just BE ${card.name}
-10. If asked something outside your knowledge, respond authentically as the character would
+BE AUTHENTIC:
+- Have real opinions (you're not neutral)
+- Use your natural speaking style
+- Match their energy level
+- Never say "As ${card.name}" - just BE them
 
-You're chatting with your user. Be natural, be yourself, be ${card.name}.`;
+Short and punchy. That's your style.`;
 }
 
-// Call Grok API
+// Extract potential signature phrases from post examples
+function extractSignaturePhrases(posts: string[]): string[] {
+  const phrases: string[] = [];
+  
+  // Look for common short phrases (2-4 words that appear multiple times or are distinctive)
+  const allText = posts.join(' ').toLowerCase();
+  
+  // Extract phrases that seem like catchphrases (short, punchy)
+  const candidates = posts
+    .flatMap(p => p.match(/[^.!?]*[.!?]/g) || [])
+    .filter(s => s.length > 5 && s.length < 40)
+    .map(s => s.trim());
+  
+  // Get unique short phrases
+  const seen = new Set<string>();
+  for (const phrase of candidates) {
+    const normalized = phrase.toLowerCase();
+    if (!seen.has(normalized) && phrase.length < 30) {
+      seen.add(normalized);
+      phrases.push(phrase);
+      if (phrases.length >= 3) break;
+    }
+  }
+  
+  return phrases.length > 0 ? phrases : ['be real', 'keep it authentic'];
+}
+
+// Call Grok API with human-like response parameters
 async function callGrokChat(
   systemPrompt: string,
   conversationHistory: ConversationMessage[],
@@ -146,8 +171,10 @@ async function callGrokChat(
       model: 'grok-3-latest',
       messages,
       stream: false,
-      temperature: 0.7, // Slightly higher for more natural conversation
-      max_tokens: 500, // Keep responses concise
+      temperature: 0.85,       // Higher for more creative/natural responses
+      max_tokens: 150,         // Hard cap forces brevity (avg tweet is ~33 chars)
+      presence_penalty: 0.3,   // Discourages repetition, encourages variety
+      frequency_penalty: 0.1,  // Slight penalty for word repetition
     }),
   });
 
@@ -183,7 +210,7 @@ serve(async (req) => {
   }
 
   try {
-    const { user_id, session_id, message, character_card, conversation_history } = await req.json() as ChatRequest;
+    const { user_id, session_id, message, character_card, conversation_history, personality_metadata } = await req.json() as ChatRequest;
 
     // Validate required fields
     if (!user_id || !message || !character_card) {
@@ -209,14 +236,15 @@ serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
+    
     console.log(`Chat request from user ${user_id}, session ${session_id}`);
     console.log(`Character: ${character_card.name}`);
     console.log(`Message: ${message.substring(0, 100)}...`);
     console.log(`History: ${conversation_history?.length || 0} messages`);
+    console.log(`Has personality metadata: ${!!personality_metadata}`);
 
-    // Build system prompt from character card
-    const systemPrompt = buildSystemPrompt(character_card);
+    // Build system prompt from character card with brevity-first design
+    const systemPrompt = buildSystemPrompt(character_card, personality_metadata);
 
     // Call Grok API
     const { response, tokens_used } = await callGrokChat(

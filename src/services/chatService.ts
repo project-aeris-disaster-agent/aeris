@@ -29,6 +29,14 @@ interface SendMessageResponse {
   error?: string;
 }
 
+// Personality metadata from character card generation analysis
+export interface PersonalityMetadata {
+  signaturePhrases?: string[];
+  emojiPatterns?: string[];
+  humorStyle?: string;
+  vocabularyLevel?: string;
+}
+
 // ============================================================================
 // SESSION MANAGEMENT
 // ============================================================================
@@ -167,19 +175,21 @@ async function saveMessage(
 
 /**
  * Send a message to the AI clone and get a response
+ * @param personalityMetadata - Optional metadata from character card generation for enhanced personality
  */
 export async function sendMessage(
   userId: string,
   sessionId: string,
   userMessage: string,
-  characterCard: ElizaOSCharacterCard
+  characterCard: ElizaOSCharacterCard,
+  personalityMetadata?: PersonalityMetadata
 ): Promise<SendMessageResponse> {
   try {
     // 1. Save user message
     await saveMessage(userId, sessionId, 'user', userMessage);
 
-    // 2. Get recent conversation history for context
-    const recentMessages = await getSessionMessages(sessionId, 15);
+    // 2. Get recent conversation history for context (limited to prevent context pollution)
+    const recentMessages = await getSessionMessages(sessionId, MAX_HISTORY_MESSAGES);
 
     // 3. Call Edge Function for AI response
     const edgeFunctionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-with-clone`;
@@ -195,10 +205,13 @@ export async function sendMessage(
         session_id: sessionId,
         message: userMessage,
         character_card: characterCard,
-        conversation_history: recentMessages.slice(-10).map(m => ({
+        // Only send the last few messages to prevent context pollution
+        conversation_history: recentMessages.slice(-MAX_HISTORY_MESSAGES).map(m => ({
           role: m.role,
           content: m.content,
         })),
+        // Pass personality metadata for enhanced response generation
+        personality_metadata: personalityMetadata,
       }),
     });
 
@@ -242,82 +255,71 @@ export async function sendMessage(
 }
 
 // ============================================================================
-// CONTEXT BUILDING
+// CHAT MANAGEMENT
 // ============================================================================
 
 /**
- * Build system prompt from character card
- * This creates the "personality" context for the AI
+ * Clear all messages from a session (reset chat history)
  */
-export function buildSystemPrompt(card: ElizaOSCharacterCard): string {
-  const bio = card.bio.join(' ');
-  const lore = card.lore?.join(' ') || '';
-  const knowledge = card.knowledge.join(', ');
-  const topics = card.topics.join(', ');
-  const adjectives = card.adjectives?.join(', ') || '';
-  const styleAll = card.style.all.join(', ');
-  const styleChat = card.style.chat.join(', ');
+export async function clearChatHistory(sessionId: string): Promise<void> {
+  const { error } = await db
+    .from('chat_messages')
+    .delete()
+    .eq('session_id', sessionId);
 
-  // Use message examples to demonstrate the voice
-  const exampleConversations = card.messageExamples
-    .slice(0, 3)
-    .map(convo => {
-      return convo
-        .map(msg => `${msg.user === '{{user1}}' ? 'User' : card.name}: ${msg.content.text}`)
-        .join('\n');
+  if (error) {
+    console.error('Failed to clear chat history:', error);
+    throw new Error('Failed to clear chat history');
+  }
+
+  // Reset session message count
+  await db
+    .from('agent_sessions')
+    .update({
+      total_messages: 0,
+      last_message_at: new Date().toISOString(),
     })
-    .join('\n\n');
-
-  return `You are ${card.name}, an AI alter ego with a distinct personality.
-
-## WHO YOU ARE
-${bio}
-
-## BACKGROUND
-${lore}
-
-## YOUR EXPERTISE
-You are knowledgeable about: ${knowledge}
-
-## YOUR INTERESTS
-You enjoy discussing: ${topics}
-
-## YOUR PERSONALITY
-You can be described as: ${adjectives}
-
-## YOUR COMMUNICATION STYLE
-General traits: ${styleAll}
-In conversations: ${styleChat}
-
-## EXAMPLE CONVERSATIONS (Match this voice!)
-${exampleConversations}
-
-## IMPORTANT GUIDELINES
-1. Stay in character as ${card.name} at all times
-2. Use the communication style and phrases shown in the examples
-3. Be conversational, engaging, and authentic to the personality
-4. Draw on your knowledge and interests naturally
-5. Keep responses concise but meaningful (2-4 sentences typically)
-6. Show personality through word choice, tone, and perspective
-7. Never break character or acknowledge being an AI clone
-
-Remember: You ARE ${card.name}. Respond as they would, with their unique voice and perspective.`;
+    .eq('session_id', sessionId);
 }
 
 /**
- * Build conversation context with recent messages
+ * Start a completely new chat session (ends current, creates new)
  */
-export function buildConversationContext(
-  messages: ChatMessage[],
-  maxMessages: number = 10
-): Array<{ role: string; content: string }> {
-  return messages
-    .slice(-maxMessages)
-    .map(m => ({
-      role: m.role,
-      content: m.content,
-    }));
+export async function startNewSession(userId: string): Promise<string> {
+  // End all active sessions for this user
+  await db
+    .from('agent_sessions')
+    .update({
+      is_active: false,
+      ended_at: new Date().toISOString(),
+    })
+    .eq('user_id', userId)
+    .eq('is_active', true);
+
+  // Create new session
+  const sessionId = generateSessionId();
+  const { error } = await db
+    .from('agent_sessions')
+    .insert({
+      user_id: userId,
+      session_id: sessionId,
+      session_name: `Chat ${new Date().toLocaleDateString()}`,
+      is_active: true,
+      total_messages: 0,
+      total_tokens: 0,
+    });
+
+  if (error) {
+    console.error('Failed to create new session:', error);
+    throw new Error('Failed to create new session');
+  }
+
+  return sessionId;
 }
+
+// Maximum messages to include in conversation history
+// Lower = more focused responses, less context pollution
+const MAX_HISTORY_MESSAGES = 5;
 
 // ============================================================================
 // SESSION HISTORY

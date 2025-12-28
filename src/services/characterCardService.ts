@@ -29,6 +29,11 @@ interface GenerateCharacterCardResponse {
     method: string;
     tweets_analyzed: number;
     generated_at: string;
+    // Personality data for human-like chat responses
+    signaturePhrases?: string[];
+    emojiPatterns?: string[];
+    humorStyle?: string;
+    vocabularyLevel?: string;
     analysis_summary?: {
       primary_topics: string[];
       core_traits: string[];

@@ -8,7 +8,8 @@ import {
   X,
   CheckCircle2,
   AlertCircle,
-  Bot
+  Bot,
+  Sparkles
 } from 'lucide-react';
 import { useNotifications } from '@/contexts/NotificationContext';
 
@@ -72,6 +73,7 @@ export function AutomationDropdown({
   const [postStatus, setPostStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [tags, setTags] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   
   // Agent Mode state
@@ -108,7 +110,8 @@ export function AutomationDropdown({
       setEditableContent(recommendedPost.content);
     }
     if (recommendedPost?.suggestedTopics) {
-      setTags([...recommendedPost.suggestedTopics]);
+      // Only take the first tag to minimize UI space
+      setTags(recommendedPost.suggestedTopics.slice(0, 1));
     }
   }, [recommendedPost]);
 
@@ -234,9 +237,9 @@ export function AutomationDropdown({
       );
       setRecommendedPost(post);
       setEditableContent(post.content);
-      // Update tags only if no tags exist yet (initial generation)
+      // Update tags only if no tags exist yet (initial generation) - only take first tag
       if (tags.length === 0 && post.suggestedTopics.length > 0) {
-        setTags([...post.suggestedTopics]);
+        setTags(post.suggestedTopics.slice(0, 1));
       }
     } catch (error) {
       console.error('Failed to generate post:', error);
@@ -258,6 +261,52 @@ export function AutomationDropdown({
       }
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleSummarize = async () => {
+    if (!editableContent.trim() || !characterCard) return;
+    
+    setIsSummarizing(true);
+    try {
+      // Call the chat edge function to summarize in the character's voice
+      const edgeFunctionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-with-clone`;
+      
+      const response = await fetch(edgeFunctionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          session_id: sessionId || 'summarize-session',
+          message: `Summarize this tweet into 1-2 short sentences with emojis. Keep your authentic voice - punchy, casual, like texting a friend. Here's the tweet to summarize:\n\n"${editableContent}"`,
+          character_card: characterCard,
+          conversation_history: [],
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to summarize');
+      }
+
+      // Clean up the response - remove quotes if wrapped
+      let summarized = data.response.trim();
+      if (summarized.startsWith('"') && summarized.endsWith('"')) {
+        summarized = summarized.slice(1, -1);
+      }
+      
+      setEditableContent(summarized);
+      showSuccess('✨ Tweet summarized!');
+    } catch (error) {
+      console.error('Failed to summarize:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to summarize';
+      showError(`Summarize failed: ${errorMessage}`, 4000);
+    } finally {
+      setIsSummarizing(false);
     }
   };
 
@@ -471,18 +520,18 @@ export function AutomationDropdown({
                 <div className="absolute bottom-0 right-0 w-8 h-8 border-r-2 border-b-2 border-yellow-500/50 rounded-br-2xl" />
                 
                 {/* Scrollable Content Area */}
-                <div className="p-2.5 sm:p-3 space-y-2 sm:space-y-2.5 relative z-10 flex flex-col flex-1 min-h-0 overflow-y-auto">
+                <div className="p-2 sm:p-2.5 space-y-1.5 sm:space-y-2 relative z-10 flex flex-col flex-1 min-h-0 overflow-y-auto">
                   {/* Premium Header */}
-                  <div className="flex items-center justify-between pb-2 border-b border-yellow-500/20">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 bg-gradient-to-br from-yellow-500/20 to-orange-500/20 rounded-lg border border-yellow-500/30">
-                        <Zap className="w-4 h-4 text-yellow-400" />
+                  <div className="flex items-center justify-between pb-1.5 border-b border-yellow-500/20">
+                    <div className="flex items-center gap-1.5">
+                      <div className="p-1 bg-gradient-to-br from-yellow-500/20 to-orange-500/20 rounded-lg border border-yellow-500/30">
+                        <Zap className="w-3.5 h-3.5 text-yellow-400" />
                       </div>
                       <div>
-                        <h3 className="text-white font-bold text-sm flex items-center gap-2">
+                        <h3 className="text-white font-bold text-xs flex items-center gap-2">
                           Recommended Post
                         </h3>
-                        <p className="text-yellow-400/70 text-[10px] font-medium">Premium Automation</p>
+                        <p className="text-yellow-400/70 text-[9px] font-medium">Premium Automation</p>
                       </div>
                     </div>
                     <button
@@ -495,30 +544,30 @@ export function AutomationDropdown({
 
                   {/* Agent Mode Toggle */}
                   <div 
-                    className={`rounded-lg p-2.5 border-2 transition-all duration-300 ${
+                    className={`rounded-lg p-2 border-2 transition-all duration-300 ${
                       agentSettings.enabled 
                         ? 'bg-gradient-to-r from-green-500/20 to-emerald-500/20 border-green-500/50 shadow-lg shadow-green-500/20' 
                         : 'bg-black/40 border-white/10'
                     }`}
                   >
                     <label className="flex items-center justify-between cursor-pointer">
-                      <div className="flex items-center gap-2">
-                        <div className={`p-1.5 rounded-lg transition-all duration-300 ${
+                      <div className="flex items-center gap-1.5">
+                        <div className={`p-1 rounded-lg transition-all duration-300 ${
                           agentSettings.enabled 
                             ? 'bg-green-500/30 border border-green-500/50' 
                             : 'bg-white/10 border border-white/20'
                         }`}>
-                          <Bot className={`w-4 h-4 transition-colors ${
+                          <Bot className={`w-3.5 h-3.5 transition-colors ${
                             agentSettings.enabled ? 'text-green-400' : 'text-white/50'
                           }`} />
                         </div>
                         <div>
-                          <span className={`font-bold text-sm transition-colors ${
+                          <span className={`font-bold text-xs transition-colors ${
                             agentSettings.enabled ? 'text-green-300' : 'text-white/70'
                           }`}>
                             AGENT MODE
                           </span>
-                          <p className={`text-[10px] transition-colors ${
+                          <p className={`text-[9px] transition-colors leading-tight ${
                             agentSettings.enabled ? 'text-green-400/70' : 'text-white/40'
                           }`}>
                             {agentSettings.enabled ? 'Auto-engagement active' : 'Enable auto-engagement'}
@@ -533,29 +582,29 @@ export function AutomationDropdown({
                           disabled={isTogglingAgentMode}
                           className="sr-only peer"
                         />
-                        <div className={`w-11 h-6 rounded-full transition-all duration-300 peer-focus:ring-2 peer-focus:ring-green-500/30 ${
+                        <div className={`w-10 h-5 rounded-full transition-all duration-300 peer-focus:ring-2 peer-focus:ring-green-500/30 ${
                           agentSettings.enabled 
                             ? 'bg-gradient-to-r from-green-500 to-emerald-500' 
                             : 'bg-white/20'
                         }`}>
-                          <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-300 ${
-                            agentSettings.enabled ? 'translate-x-5' : 'translate-x-0'
+                          <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-md transition-transform duration-300 ${
+                            agentSettings.enabled ? 'translate-x-[18px]' : 'translate-x-0'
                           }`} />
                         </div>
                         {agentSettings.enabled && (
-                          <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full animate-pulse" />
+                          <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 rounded-full animate-pulse" />
                         )}
                       </div>
                     </label>
                     {agentSettings.enabled && (
-                      <div className="mt-2 pt-2 border-t border-green-500/20 space-y-1.5">
-                        <p className="text-green-400/80 text-[10px] flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                          <span className="font-medium">LIVE</span>
-                          <span className="text-green-400/60">• Monitoring {agentSettings.targetAccounts.length} target account{agentSettings.targetAccounts.length !== 1 ? 's' : ''}</span>
-                        </p>
+                      <div className="mt-1.5 pt-1.5 border-t border-green-500/20">
+                        <div className="flex items-center gap-2 text-[9px] mb-1">
+                          <span className="w-1 h-1 bg-green-400 rounded-full animate-pulse" />
+                          <span className="font-medium text-green-400/80">LIVE</span>
+                          <span className="text-green-400/60">• Monitoring {agentSettings.targetAccounts.length} target{agentSettings.targetAccounts.length !== 1 ? 's' : ''}</span>
+                        </div>
                         {agentStats && (
-                          <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                          <div className="flex items-center gap-2 flex-wrap text-[9px]">
                             <div className="text-green-400/70">
                               <span className="text-white/50">Pending: </span>
                               <span className="font-semibold">{agentStats.pendingActions}</span>
@@ -564,15 +613,32 @@ export function AutomationDropdown({
                               <span className="text-white/50">Today: </span>
                               <span className="font-semibold">{agentStats.executedToday}</span>
                             </div>
-                            {agentStats.lastRunAt && (
-                              <div className="text-green-400/60 col-span-2 text-[9px]">
-                                Last run: {formatRelativeTime(agentStats.lastRunAt)}
-                              </div>
+                            {agentStats.lastRunAt && agentStats.nextScheduledAction && (
+                              <>
+                                <span className="text-green-400/40">•</span>
+                                <span className="text-green-400/60">
+                                  Last: {formatRelativeTime(agentStats.lastRunAt)}
+                                </span>
+                                <span className="text-green-400/60">
+                                  Next: {formatRelativeTime(agentStats.nextScheduledAction)}
+                                </span>
+                              </>
                             )}
-                            {agentStats.nextScheduledAction && (
-                              <div className="text-green-400/60 col-span-2 text-[9px]">
-                                Next action: {formatRelativeTime(agentStats.nextScheduledAction)}
-                              </div>
+                            {agentStats.lastRunAt && !agentStats.nextScheduledAction && (
+                              <>
+                                <span className="text-green-400/40">•</span>
+                                <span className="text-green-400/60">
+                                  Last: {formatRelativeTime(agentStats.lastRunAt)}
+                                </span>
+                              </>
+                            )}
+                            {!agentStats.lastRunAt && agentStats.nextScheduledAction && (
+                              <>
+                                <span className="text-green-400/40">•</span>
+                                <span className="text-green-400/60">
+                                  Next: {formatRelativeTime(agentStats.nextScheduledAction)}
+                                </span>
+                              </>
                             )}
                           </div>
                         )}
@@ -582,83 +648,99 @@ export function AutomationDropdown({
 
                   {/* Premium Post Content */}
                   {isGenerating ? (
-                    <div className="bg-gradient-to-br from-black/60 to-black/40 rounded-lg p-4 border-2 border-yellow-500/20 flex items-center justify-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="p-2 bg-yellow-500/10 rounded-full border border-yellow-500/30">
-                          <RefreshCw className="w-5 h-5 text-yellow-400 animate-spin" />
+                    <div className="bg-gradient-to-br from-black/60 to-black/40 rounded-lg p-3 border-2 border-yellow-500/20 flex items-center justify-center">
+                      <div className="flex flex-col items-center gap-1.5">
+                        <div className="p-1.5 bg-yellow-500/10 rounded-full border border-yellow-500/30">
+                          <RefreshCw className="w-4 h-4 text-yellow-400 animate-spin" />
                         </div>
-                        <p className="text-yellow-400/80 text-xs font-medium">Generating...</p>
+                        <p className="text-yellow-400/80 text-[10px] font-medium">Generating...</p>
                       </div>
                     </div>
                   ) : recommendedPost ? (
-                    <div className="bg-gradient-to-br from-black/60 to-black/40 rounded-lg p-3 border-2 border-yellow-500/20 relative">
+                    <div className="bg-gradient-to-br from-black/60 to-black/40 rounded-lg p-2.5 border-2 border-yellow-500/20 relative">
                       <div className="absolute top-1.5 left-1.5 w-2.5 h-2.5 border-l-2 border-t-2 border-yellow-500/50" />
                       <div className="absolute top-1.5 right-1.5 w-2.5 h-2.5 border-r-2 border-t-2 border-yellow-500/50" />
                       <div className="absolute bottom-1.5 left-1.5 w-2.5 h-2.5 border-l-2 border-b-2 border-yellow-500/50" />
                       <div className="absolute bottom-1.5 right-1.5 w-2.5 h-2.5 border-r-2 border-b-2 border-yellow-500/50" />
                       
-                      <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-start justify-between mb-1.5">
                         <div className="flex items-center gap-1.5">
-                          <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-semibold rounded border border-yellow-500/30">
+                          <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 text-[9px] font-semibold rounded border border-yellow-500/30">
                             AI-GENERATED
                           </span>
                         </div>
-                        <button
-                          onClick={handleGeneratePost}
-                          className="p-1.5 hover:bg-yellow-500/10 rounded-lg transition-colors border border-yellow-500/20 hover:border-yellow-500/40"
-                          title={tags.length > 0 ? `Regenerate with ${tags.length} tag(s)` : "Regenerate"}
-                        >
-                          <RefreshCw className="w-3.5 h-3.5 text-yellow-400/80" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={handleSummarize}
+                            disabled={isSummarizing || !editableContent.trim()}
+                            className="p-1 hover:bg-purple-500/10 rounded-lg transition-colors border border-purple-500/20 hover:border-purple-500/40 disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Summarize into 1-2 sentences with emojis"
+                          >
+                            {isSummarizing ? (
+                              <RefreshCw className="w-3 h-3 text-purple-400/80 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-3 h-3 text-purple-400/80" />
+                            )}
+                          </button>
+                          <button
+                            onClick={handleGeneratePost}
+                            className="p-1 hover:bg-yellow-500/10 rounded-lg transition-colors border border-yellow-500/20 hover:border-yellow-500/40"
+                            title={tags.length > 0 ? `Regenerate with ${tags.length} tag(s)` : "Regenerate"}
+                          >
+                            <RefreshCw className="w-3 h-3 text-yellow-400/80" />
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-1">
-                        <label className="text-yellow-400/70 text-[10px] font-semibold flex items-center gap-1">
+                        <label className="text-yellow-400/70 text-[9px] font-semibold flex items-center gap-1">
                           <span>Edit before posting</span>
                         </label>
                         <textarea
                           value={editableContent}
                           onChange={(e) => setEditableContent(e.target.value)}
-                          className="w-full bg-black/60 border border-yellow-500/30 rounded-lg p-2 text-white text-xs leading-tight focus:outline-none focus:border-yellow-500/60 min-h-[96px] resize-vertical"
+                          className="w-full bg-black/60 border border-yellow-500/30 rounded-lg p-1.5 text-white text-xs leading-tight focus:outline-none focus:border-yellow-500/60 min-h-[80px] resize-vertical"
                           placeholder="Customize the generated copy..."
                         />
                       </div>
                       {/* Tags Section */}
-                      <div className="mt-2 pt-2 border-t border-yellow-500/10">
-                        <label className="text-yellow-400/70 text-[10px] font-semibold mb-1.5 block">
-                          Tags / Topics
-                        </label>
+                      <div className="mt-1.5 pt-1.5 border-t border-yellow-500/10">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-yellow-400/70 text-[9px] font-semibold">
+                            Tags / Topics
+                          </label>
+                        </div>
                         {tags.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mb-2">
+                          <div className="flex flex-wrap gap-1 mb-1.5">
                             {tags.map((tag, idx) => (
                               <span
                                 key={idx}
-                                className="px-2 py-0.5 bg-yellow-500/10 text-yellow-400 text-[10px] font-medium rounded-full border border-yellow-500/30 flex items-center gap-1.5 group"
+                                className="px-1.5 py-0.5 bg-yellow-500/10 text-yellow-400 text-[9px] font-medium rounded-full border border-yellow-500/30 flex items-center gap-1 group"
                               >
-                                {tag}
+                                <span className="max-w-[120px] truncate">{tag}</span>
                                 <button
                                   onClick={() => handleDeleteTag(idx)}
-                                  className="hover:bg-yellow-500/20 rounded-full p-0.5 transition-colors"
+                                  className="hover:bg-yellow-500/20 rounded-full p-0.5 transition-colors flex-shrink-0"
                                   title="Remove tag"
                                 >
-                                  <X className="w-2.5 h-2.5 text-yellow-400/80 group-hover:text-yellow-400" />
+                                  <X className="w-2 h-2 text-yellow-400/80 group-hover:text-yellow-400" />
                                 </button>
                               </span>
                             ))}
                           </div>
                         )}
-                        <div className="flex gap-1.5">
+                        <div className="flex gap-1">
                           <input
                             type="text"
                             value={newTagInput}
                             onChange={(e) => setNewTagInput(e.target.value)}
                             onKeyDown={handleTagInputKeyDown}
-                            placeholder="Add a tag..."
-                            className="flex-1 bg-black/60 border border-yellow-500/30 rounded px-2 py-1 text-white text-[10px] focus:outline-none focus:border-yellow-500/60 placeholder:text-white/30"
+                            placeholder="Add tag..."
+                            className="flex-1 bg-black/60 border border-yellow-500/30 rounded px-1.5 py-0.5 text-white text-[9px] focus:outline-none focus:border-yellow-500/60 placeholder:text-white/30"
                           />
                           <button
                             onClick={handleAddTag}
                             disabled={!newTagInput.trim() || tags.includes(newTagInput.trim())}
-                            className="px-2 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 disabled:opacity-40 disabled:cursor-not-allowed border border-yellow-500/30 rounded text-yellow-400 text-[10px] font-semibold transition-colors"
+                            className="px-1.5 py-0.5 bg-yellow-500/20 hover:bg-yellow-500/30 disabled:opacity-40 disabled:cursor-not-allowed border border-yellow-500/30 rounded text-yellow-400 text-[9px] font-semibold transition-colors"
                             title="Add tag"
                           >
                             Add
@@ -680,10 +762,10 @@ export function AutomationDropdown({
 
                   {/* Simplified Platform Selection - Simple Checkboxes */}
                   <div>
-                    <label className="text-yellow-400/80 text-[10px] font-semibold mb-1.5 block">
+                    <label className="text-yellow-400/80 text-[9px] font-semibold mb-1 block">
                       Platforms
                     </label>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1.5">
                       {availablePlatforms.map((platform) => {
                         const Icon = platform.icon;
                         const isSelected = selectedPlatforms.includes(platform.id);
@@ -692,7 +774,7 @@ export function AutomationDropdown({
                         return (
                           <label
                             key={platform.id}
-                            className={`flex items-center gap-1.5 cursor-pointer transition-all ${
+                            className={`flex items-center gap-1 cursor-pointer transition-all ${
                               isDisabled ? 'opacity-40 cursor-not-allowed' : ''
                             }`}
                           >
@@ -701,10 +783,10 @@ export function AutomationDropdown({
                               checked={isSelected}
                               onChange={() => !isDisabled && togglePlatform(platform.id)}
                               disabled={isDisabled}
-                              className="w-3.5 h-3.5 rounded border-2 border-yellow-500/40 bg-transparent checked:bg-yellow-500 checked:border-yellow-500 focus:ring-1 focus:ring-yellow-500/30 cursor-pointer disabled:cursor-not-allowed"
+                              className="w-3 h-3 rounded border-2 border-yellow-500/40 bg-transparent checked:bg-yellow-500 checked:border-yellow-500 focus:ring-1 focus:ring-yellow-500/30 cursor-pointer disabled:cursor-not-allowed"
                             />
                             <Icon className={`w-3 h-3 ${isSelected ? 'text-yellow-400' : 'text-white/50'}`} />
-                            <span className={`text-[10px] ${isSelected ? 'text-yellow-400' : 'text-white/60'}`}>
+                            <span className={`text-[9px] ${isSelected ? 'text-yellow-400' : 'text-white/60'}`}>
                               {platform.id === 'twitter' ? 'X' : platform.id === 'farcaster' ? 'FC' : 'BASE'}
                             </span>
                           </label>
@@ -715,15 +797,15 @@ export function AutomationDropdown({
 
                   {/* Simplified Schedule Options - Numbers Only */}
                   <div>
-                    <label className="text-yellow-400/80 text-[10px] font-semibold mb-1.5 block">
+                    <label className="text-yellow-400/80 text-[9px] font-semibold mb-1 block">
                       Schedule
                     </label>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1">
                       {scheduleOptions.map((option) => (
                         <button
                           key={option.value}
                           onClick={() => setScheduleType(option.value)}
-                          className={`px-2 py-1 rounded text-[10px] font-semibold transition-all ${
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-semibold transition-all ${
                             scheduleType === option.value
                               ? 'bg-gradient-to-r from-yellow-600/80 to-orange-500/80 text-white border border-yellow-500/50'
                               : 'bg-black/40 text-white/60 hover:text-white border border-yellow-500/20 hover:border-yellow-500/40'
@@ -736,19 +818,19 @@ export function AutomationDropdown({
 
                     {/* Simplified Custom Date/Time Picker */}
                     {scheduleType === 'custom' && (
-                      <div className="mt-2 flex gap-1.5">
+                      <div className="mt-1.5 flex gap-1">
                         <input
                           type="date"
                           value={customDate}
                           onChange={(e) => setCustomDate(e.target.value)}
                           min={new Date().toISOString().split('T')[0]}
-                          className="flex-1 bg-black/60 border border-yellow-500/30 rounded px-1.5 py-1 text-white text-[10px] focus:outline-none focus:border-yellow-500/60"
+                          className="flex-1 bg-black/60 border border-yellow-500/30 rounded px-1.5 py-0.5 text-white text-[9px] focus:outline-none focus:border-yellow-500/60"
                         />
                         <input
                           type="time"
                           value={customTime}
                           onChange={(e) => setCustomTime(e.target.value)}
-                          className="flex-1 bg-black/60 border border-yellow-500/30 rounded px-1.5 py-1 text-white text-[10px] focus:outline-none focus:border-yellow-500/60"
+                          className="flex-1 bg-black/60 border border-yellow-500/30 rounded px-1.5 py-0.5 text-white text-[9px] focus:outline-none focus:border-yellow-500/60"
                         />
                       </div>
                     )}
