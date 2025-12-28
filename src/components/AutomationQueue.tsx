@@ -22,6 +22,7 @@ import { supabase } from '@/lib/supabase';
 import type { ScheduledPostsRow, ScheduledPostType } from '@/types/database';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAgentSettings, getAgentActivityStats, calculatePredictedAgentActions, type PredictedAgentAction } from '@/services/agentService';
+import { cleanupOverdueTasks } from '@/services/automationService';
 import { useNotifications } from '@/contexts/NotificationContext';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,9 +117,22 @@ export function AutomationQueue({ userId, isVisible = true }: AutomationQueuePro
     }
   };
 
-  // Load agent settings to check if agent mode is enabled
+  // Load agent settings and clean up any overdue tasks on mount
   useEffect(() => {
     if (userId) {
+      // First, clean up any overdue tasks that failed due to logout/token issues
+      // This runs once on component mount to clear orphaned tasks
+      cleanupOverdueTasks(userId)
+        .then((result) => {
+          if (result.cancelledCount > 0) {
+            console.log(`🧹 Auto-cleaned ${result.cancelledCount} overdue tasks`);
+          }
+        })
+        .catch((error) => {
+          console.error('Failed to cleanup overdue tasks:', error);
+        });
+      
+      // Then load agent settings
       getAgentSettings(userId)
         .then((settings) => {
           setAgentModeEnabled(settings.enabled);

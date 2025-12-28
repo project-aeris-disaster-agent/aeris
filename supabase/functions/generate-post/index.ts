@@ -132,6 +132,14 @@ MENTION GUIDELINES:
 - Ensure mentions fit within 280 character limit
 - Make mentions feel natural, but they are REQUIRED when entities are referenced
 
+CRITICAL URL RULES - MUST FOLLOW:
+- DO NOT include ANY URLs or links in the post
+- DO NOT make up or fabricate website addresses (e.g., "example.com/updates", "t.co/something")
+- DO NOT include placeholder links like "[link]", "yourlinkhere", or any URL format
+- DO NOT reference specific website domains unless you are 100% certain they are correct
+- If you want to direct users somewhere, say "check our updates" or "see our latest" without adding a URL
+- NEVER guess or hallucinate domain names - if unsure, omit the link entirely
+
 Generate a social media post (50-280 characters) that:
 - Matches your authentic voice from the examples
 - ${custom_tags && custom_tags.length > 0 
@@ -141,6 +149,7 @@ Generate a social media post (50-280 characters) that:
 - **MUST include relevant @mentions** - if the post references Ferrari, F1, NBA teams, brands, or any entities, include their @handles
 - No hashtags unless that's your style
 - No emojis unless that's your style
+- **ABSOLUTELY NO URLs or web links** - this is critical
 
 Return ONLY the post text, nothing else.`;
 
@@ -186,6 +195,25 @@ Return ONLY the post text, nothing else.`;
 
     if (!generatedPost) {
       throw new Error('Failed to generate post content');
+    }
+
+    // CRITICAL: Strip any fabricated URLs from the generated content
+    // This catches cases where the AI ignores the prompt instructions
+    const urlPattern = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(com|net|org|io|co|xyz|gg|dev|app|link|me|info|biz|us|uk|tv|fm|ly|to|cc|sh|be|ai|vc|gl|ws|so|club|online|site|tech|space|world|zone|live|digital|network|page|pro|work)[^\s]*/gi;
+    const placeholderPattern = /\[link\]|\[url\]|yourlinkhere|yourlink|linkhere|checkitout\.com|example\.com|yoursite\.[a-z]+/gi;
+    
+    // Remove URLs and placeholder patterns
+    const originalPost = generatedPost;
+    generatedPost = generatedPost.replace(urlPattern, '').replace(placeholderPattern, '');
+    
+    // Clean up any double spaces or trailing/leading spaces left by URL removal
+    generatedPost = generatedPost.replace(/\s{2,}/g, ' ').trim();
+    
+    // Also remove orphaned punctuation before removed URLs (e.g., "Check it out: " becomes "Check it out")
+    generatedPost = generatedPost.replace(/:\s*$/, '').replace(/\s+([.!?])$/, '$1').trim();
+    
+    if (originalPost !== generatedPost) {
+      console.log(`⚠️ URL(s) stripped from generated post. Original: "${originalPost.substring(0, 100)}..."`);
     }
 
     // Post-generation validation for mentions

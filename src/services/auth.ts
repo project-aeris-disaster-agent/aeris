@@ -237,13 +237,39 @@ export class AuthService {
   }
 
   /**
-   * Logout - Clears Twitter data and signs out the user
+   * Logout - Cancels pending tasks and clears Twitter data, then signs out the user
+   * 
+   * IMPORTANT: When logging out, we must cancel all pending scheduled tasks BEFORE
+   * clearing the Twitter tokens. Otherwise, the pg_cron scheduler will attempt to
+   * execute tasks but fail because the tokens are NULL, causing "overdue" tasks
+   * that never execute.
    */
   static async logout(): Promise<{ error: any }> {
     const { data: { user } } = await supabase.auth.getUser();
     
-    // Clear Twitter data from profile if user exists
     if (user) {
+      // STEP 1: Cancel all pending scheduled tasks FIRST
+      // This prevents "overdue" tasks from accumulating when tokens are cleared
+      console.log('🗑️ Cancelling pending scheduled tasks before logout...');
+      const { error: cancelError, count } = await ((supabase
+        .from('scheduled_posts') as any)
+        .update({ 
+          status: 'cancelled',
+          error_message: 'Cancelled due to user logout'
+        })
+        .eq('user_id', user.id)
+        .eq('status', 'pending')
+        .select('id'));
+
+      if (cancelError) {
+        console.error('Error cancelling scheduled tasks:', cancelError);
+        // Continue with logout even if cancelling tasks fails
+      } else {
+        console.log(`✅ Cancelled ${count?.length || 0} pending scheduled tasks`);
+      }
+
+      // STEP 2: Clear Twitter data from profile
+      console.log('🔓 Clearing Twitter connection...');
       const { error: profileError } = await ((supabase
         .from('profiles') as any)
         .update({

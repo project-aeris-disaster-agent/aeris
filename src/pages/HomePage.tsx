@@ -216,35 +216,52 @@ export function HomePage() {
             setPersonalityMetadata(personalityData);
           }
           
-          // Handle Twitter metrics: use cached if available, otherwise fetch fresh
-          if (metadata?.twitter_metrics) {
-            setTwitterMetrics(metadata.twitter_metrics);
+          // Handle Twitter metrics: always try to fetch fresh if we have access token, fallback to cache
+          if (loadedProfile?.twitter_access_token) {
+            // Always fetch fresh metrics from Twitter API when we have access token
             // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:209',message:'twitterMetrics set from cache',data:{twitterMetrics:metadata.twitter_metrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-            // #endregion
-          } else if (loadedProfile?.twitter_access_token) {
-            // Fetch fresh metrics from Twitter API if we have access token
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:212',message:'fetching fresh twitter metrics',data:{hasAccessToken:!!loadedProfile.twitter_access_token},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+            fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:220',message:'fetching fresh twitter metrics',data:{hasAccessToken:!!loadedProfile.twitter_access_token,hasCachedMetrics:!!metadata?.twitter_metrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
             // #endregion
             try {
               const freshMetrics = await fetchTwitterMetrics(loadedProfile.twitter_access_token);
               if (freshMetrics) {
                 setTwitterMetrics(freshMetrics);
                 // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:218',message:'twitterMetrics set from API',data:{twitterMetrics:freshMetrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+                fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:226',message:'twitterMetrics set from API',data:{twitterMetrics:freshMetrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
                 // #endregion
               } else {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:222',message:'failed to fetch twitter metrics',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
-                // #endregion
+                // Fallback to cached metrics if fresh fetch fails
+                if (metadata?.twitter_metrics) {
+                  setTwitterMetrics(metadata.twitter_metrics);
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:231',message:'twitterMetrics fallback to cache',data:{twitterMetrics:metadata.twitter_metrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+                  // #endregion
+                } else {
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:234',message:'failed to fetch twitter metrics and no cache',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+                  // #endregion
+                }
               }
             } catch (error) {
               console.warn('Failed to fetch Twitter metrics:', error);
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:227',message:'error fetching twitter metrics',data:{error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
-              // #endregion
+              // Fallback to cached metrics on error
+              if (metadata?.twitter_metrics) {
+                setTwitterMetrics(metadata.twitter_metrics);
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:241',message:'twitterMetrics fallback to cache on error',data:{twitterMetrics:metadata.twitter_metrics,error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+                // #endregion
+              } else {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:245',message:'error fetching twitter metrics and no cache',data:{error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+                // #endregion
+              }
             }
+          } else if (metadata?.twitter_metrics) {
+            // Use cached metrics if no access token available
+            setTwitterMetrics(metadata.twitter_metrics);
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:251',message:'twitterMetrics set from cache (no token)',data:{twitterMetrics:metadata.twitter_metrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
           }
         } else {
           // #region agent log
@@ -266,6 +283,30 @@ export function HomePage() {
 
     fetchUserData();
   }, [user?.id]);
+
+  // Refresh Twitter metrics when userProfile loads (in case it loads after initial fetch)
+  useEffect(() => {
+    async function refreshMetricsIfNeeded() {
+      // Only refresh if we have access token but no metrics yet
+      if (userProfile?.twitter_access_token && !twitterMetrics) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:288',message:'refreshing metrics from userProfile effect',data:{hasAccessToken:!!userProfile.twitter_access_token,hasMetrics:!!twitterMetrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,D'})}).catch(()=>{});
+        // #endregion
+        try {
+          const freshMetrics = await fetchTwitterMetrics(userProfile.twitter_access_token);
+          if (freshMetrics) {
+            setTwitterMetrics(freshMetrics);
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'HomePage.tsx:293',message:'metrics refreshed from userProfile effect',data:{twitterMetrics:freshMetrics},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
+          }
+        } catch (error) {
+          console.warn('Failed to refresh Twitter metrics from userProfile effect:', error);
+        }
+      }
+    }
+    refreshMetricsIfNeeded();
+  }, [userProfile?.twitter_access_token, twitterMetrics]);
 
   // Automatically enable Twitter toggle if user has successfully logged in with Twitter
   useEffect(() => {

@@ -300,11 +300,18 @@ async function generateMentionReply(
 
   const systemPrompt = `You are ${characterCardName}. Your personality: ${characterBio.slice(0, 2).join(' ')}. 
 Your communication style: ${postStyle.slice(0, 3).join(', ')}.
-Generate a short, authentic reply (max 200 characters) to the following tweet. Be engaging but not spammy.`;
+Generate a short, authentic reply (max 200 characters) to the following tweet. Be engaging but not spammy.
+
+CRITICAL URL RULES - MUST FOLLOW:
+- DO NOT include ANY URLs or links in your reply
+- DO NOT make up or fabricate website addresses
+- DO NOT include placeholder links like "[link]" or domain names you're not 100% certain about
+- If you want to direct the user somewhere, do NOT add a URL - just engage with their content
+- NEVER guess or hallucinate domain names`;
 
   const userPrompt = `Tweet from @${targetUsername}: "${targetTweet.text}"
 
-Generate a reply that sounds natural and adds value to the conversation.`;
+Generate a reply that sounds natural and adds value to the conversation. DO NOT include any URLs or web links.`;
 
   try {
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
@@ -330,10 +337,24 @@ Generate a reply that sounds natural and adds value to the conversation.`;
     }
 
     const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content?.trim();
+    let reply = data.choices?.[0]?.message?.content?.trim();
+    
+    if (!reply) return null;
+    
+    // CRITICAL: Strip any fabricated URLs from the generated reply
+    const urlPattern = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(com|net|org|io|co|xyz|gg|dev|app|link|me|info|biz|us|uk|tv|fm|ly|to|cc|sh|be|ai|vc|gl|ws|so|club|online|site|tech|space|world|zone|live|digital|network|page|pro|work)[^\s]*/gi;
+    const placeholderPattern = /\[link\]|\[url\]|yourlinkhere|yourlink|linkhere|checkitout\.com|example\.com|yoursite\.[a-z]+/gi;
+    
+    const originalReply = reply;
+    reply = reply.replace(urlPattern, '').replace(placeholderPattern, '');
+    reply = reply.replace(/\s{2,}/g, ' ').replace(/:\s*$/, '').trim();
+    
+    if (originalReply !== reply) {
+      console.log(`⚠️ URL stripped from generated reply for @${targetUsername}`);
+    }
     
     // Ensure reply is not too long
-    if (reply && reply.length > 280) {
+    if (reply.length > 280) {
       return reply.substring(0, 277) + '...';
     }
     

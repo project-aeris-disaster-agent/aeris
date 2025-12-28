@@ -370,3 +370,99 @@ export async function getScheduledPosts(userId: string) {
   return data || [];
 }
 
+/**
+ * Clean up overdue tasks that failed due to missing tokens
+ * This helps users who logged out and back in, clearing orphaned tasks
+ * 
+ * @param userId - The user's ID
+ * @returns Object with cancelled count and any errors
+ */
+export async function cleanupOverdueTasks(userId: string): Promise<{
+  cancelledCount: number;
+  error?: string;
+}> {
+  const now = new Date();
+  
+  // Find overdue pending tasks (scheduled_for in the past)
+  const { data: overdueTasks, error: fetchError } = await db
+    .from('scheduled_posts')
+    .select('id, scheduled_for, post_type')
+    .eq('user_id', userId)
+    .eq('status', 'pending')
+    .lt('scheduled_for', now.toISOString());
+
+  if (fetchError) {
+    console.error('Failed to fetch overdue tasks:', fetchError);
+    return { cancelledCount: 0, error: fetchError.message };
+  }
+
+  if (!overdueTasks || overdueTasks.length === 0) {
+    console.log('No overdue tasks to clean up');
+    return { cancelledCount: 0 };
+  }
+
+  console.log(`Found ${overdueTasks.length} overdue tasks to clean up`);
+
+  // Cancel all overdue pending tasks
+  const { error: updateError } = await db
+    .from('scheduled_posts')
+    .update({
+      status: 'cancelled',
+      error_message: 'Auto-cancelled: Task was overdue and could not be executed'
+    })
+    .eq('user_id', userId)
+    .eq('status', 'pending')
+    .lt('scheduled_for', now.toISOString());
+
+  if (updateError) {
+    console.error('Failed to cancel overdue tasks:', updateError);
+    return { cancelledCount: 0, error: updateError.message };
+  }
+
+  console.log(`✅ Cancelled ${overdueTasks.length} overdue tasks`);
+  return { cancelledCount: overdueTasks.length };
+}
+
+/**
+ * Cancel all pending scheduled posts for a user
+ * Useful when user wants to clear their queue
+ * 
+ * @param userId - The user's ID
+ * @returns Object with cancelled count and any errors
+ */
+export async function cancelAllPendingPosts(userId: string): Promise<{
+  cancelledCount: number;
+  error?: string;
+}> {
+  const { data: pendingTasks, error: fetchError } = await db
+    .from('scheduled_posts')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('status', 'pending');
+
+  if (fetchError) {
+    console.error('Failed to fetch pending tasks:', fetchError);
+    return { cancelledCount: 0, error: fetchError.message };
+  }
+
+  if (!pendingTasks || pendingTasks.length === 0) {
+    return { cancelledCount: 0 };
+  }
+
+  const { error: updateError } = await db
+    .from('scheduled_posts')
+    .update({
+      status: 'cancelled',
+      error_message: 'Cancelled by user'
+    })
+    .eq('user_id', userId)
+    .eq('status', 'pending');
+
+  if (updateError) {
+    console.error('Failed to cancel pending tasks:', updateError);
+    return { cancelledCount: 0, error: updateError.message };
+  }
+
+  return { cancelledCount: pendingTasks.length };
+}
+
