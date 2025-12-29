@@ -33,16 +33,8 @@ export async function getAgentSettings(userId: string): Promise<AgentSettings> {
 
   if (error) {
     console.error('Failed to fetch agent settings:', error);
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:getAgentSettings:error',message:'Failed to fetch agent settings',data:{userId,errorMessage:error.message,errorCode:error.code},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
     return DEFAULT_AGENT_SETTINGS;
   }
-
-  // #region agent log
-  const settings = data?.agent_settings || DEFAULT_AGENT_SETTINGS;
-  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:getAgentSettings:success',message:'Agent settings loaded',data:{userId,enabled:settings.enabled,targetAccountsCount:settings.targetAccounts?.length||0,actions:settings.actions,frequency:settings.frequency,lastRunAt:settings.lastRunAt,hasData:!!data?.agent_settings},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-  // #endregion
 
   return data?.agent_settings || DEFAULT_AGENT_SETTINGS;
 }
@@ -82,24 +74,58 @@ export async function updateAgentSettings(
 
 /**
  * Toggle agent mode enabled/disabled
+ * When enabling Agent Mode, clears lastRunAt to trigger first-run optimization (1-4 hours)
  */
 export async function toggleAgentMode(
   userId: string,
   enabled: boolean
 ): Promise<AgentSettings> {
-  return updateAgentSettings(userId, { enabled });
+  // Get current settings to check if we're enabling from disabled state
+  const currentSettings = await getAgentSettings(userId);
+  const wasDisabled = !currentSettings.enabled;
+  
+  // If enabling Agent Mode (from disabled state), clear lastRunAt to trigger first-run optimization
+  const updateData: Partial<AgentSettings> = { enabled };
+  if (enabled && wasDisabled) {
+    updateData.lastRunAt = null;
+  }
+  
+  const updated = await updateAgentSettings(userId, updateData);
+  return updated;
 }
 
 /**
  * Calculate randomized schedule time based on frequency
  * Adds jitter to avoid detection by Twitter/X
+ * First run optimization: schedules 1-4 hours in future for immediate feedback
  */
 export function calculateRandomizedScheduleTime(
   frequency: AgentFrequency,
   lastRunAt: Date | null
 ): Date {
   const now = new Date();
-  const base = lastRunAt || now;
+  
+  // First run optimization: schedule 1-4 hours in future for immediate feedback
+  if (!lastRunAt) {
+    const minHours = 1;
+    const maxHours = 4;
+    const randomHours = minHours + Math.random() * (maxHours - minHours);
+    const scheduledTime = new Date(now.getTime() + randomHours * 60 * 60 * 1000);
+    
+    // Ensure within active hours (9 AM - 9 PM)
+    const hour = scheduledTime.getHours();
+    if (hour < 9) {
+      scheduledTime.setHours(9, Math.floor(Math.random() * 60), 0);
+    }
+    if (hour >= 21) {
+      scheduledTime.setHours(20, Math.floor(Math.random() * 60), 0);
+    }
+    
+    return scheduledTime;
+  }
+
+  // Subsequent runs - use normal frequency-based delays
+  const base = lastRunAt;
 
   // Define min/max hours for each frequency with jitter
   let minHours: number, maxHours: number;
@@ -365,10 +391,6 @@ export interface PredictedAgentAction {
 export function calculatePredictedAgentActions(
   settings: AgentSettings
 ): PredictedAgentAction[] {
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:calculatePredictedAgentActions:entry',message:'Calculating predicted actions',data:{enabled:settings.enabled,targetAccountsCount:settings.targetAccounts?.length||0,actions:settings.actions,frequency:settings.frequency,lastRunAt:settings.lastRunAt,shouldRunResult:shouldRunAgent(settings)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-  // #endregion
-
   if (!settings.enabled || settings.targetAccounts.length === 0) {
     return [];
   }
@@ -385,29 +407,10 @@ export function calculatePredictedAgentActions(
 
   // Calculate base schedule time (when cron would run next)
   const lastRun = settings.lastRunAt ? new Date(settings.lastRunAt) : null;
-  
-  // Use average time for frequency (middle of min/max range)
-  let avgHours: number;
-  switch (settings.frequency) {
-    case 'daily':
-      avgHours = 24; // Average of 20-28 hours
-      break;
-    case '3days':
-      avgHours = 72; // Average of 66-78 hours
-      break;
-    case 'weekly':
-      avgHours = 168; // Average of 144-192 hours (7 days)
-      break;
-    default:
-      avgHours = 24;
-  }
 
   // Calculate when next cron run would schedule actions
-  // If lastRun exists and it's been less than min hours, use lastRun + avgHours
-  // Otherwise, use now + avgHours (would schedule immediately)
-  const baseScheduleTime = lastRun && shouldRunAgent(settings) === false
-    ? new Date(lastRun.getTime() + avgHours * 60 * 60 * 1000)
-    : calculateRandomizedScheduleTime(settings.frequency, lastRun);
+  // Use the same logic as server-side: first run = 1-4 hours, subsequent = frequency-based
+  const baseScheduleTime = calculateRandomizedScheduleTime(settings.frequency, lastRun);
 
   const predictedActions: PredictedAgentAction[] = [];
   let globalActionIndex = 0;
@@ -440,10 +443,6 @@ export async function getAgentActivityStats(userId: string): Promise<AgentActivi
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
-
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:getAgentActivityStats',message:'Fetching agent stats',data:{userId,nowIso:now.toISOString()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-  // #endregion
 
   // Get pending actions
   const { data: pendingData } = await db
@@ -486,10 +485,6 @@ export async function getAgentActivityStats(userId: string): Promise<AgentActivi
 
   // Get agent settings for lastRunAt
   const settings = await getAgentSettings(userId);
-
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:getAgentActivityStats:return',message:'Agent stats fetched',data:{pendingActionsCount:pendingData?.length||0,scheduledTodayCount:scheduledTodayData?.length||0,executedTodayCount:executedTodayData?.length||0,failedTodayCount:failedTodayData?.length||0,nextScheduledFor:pendingData?.[0]?.scheduled_for,lastRunAt:settings.lastRunAt,agentEnabled:settings.enabled,targetAccounts:settings.targetAccounts,actions:settings.actions},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-  // #endregion
 
   return {
     pendingActions: pendingData?.length || 0,
