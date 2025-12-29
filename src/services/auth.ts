@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { User, Session, AuthError } from '@supabase/supabase-js';
+import type { AgentSettings } from '@/types/database';
 
 export interface SignUpData {
   email: string;
@@ -237,60 +238,88 @@ export class AuthService {
   }
 
   /**
-   * Logout - Cancels pending tasks and clears Twitter data, then signs out the user
+   * Logout - Signs out the user and conditionally clears Twitter data
    * 
-   * IMPORTANT: When logging out, we must cancel all pending scheduled tasks BEFORE
-   * clearing the Twitter tokens. Otherwise, the pg_cron scheduler will attempt to
-   * execute tasks but fail because the tokens are NULL, causing "overdue" tasks
-   * that never execute.
+   * IMPORTANT: If Agent Mode is enabled, Twitter tokens are preserved so that
+   * scheduled actions can continue executing even when the user is logged out.
+   * This allows Agent Mode to work autonomously and enables account switching
+   * without breaking scheduled actions.
+   * 
+   * If Agent Mode is disabled, pending tasks are cancelled and Twitter tokens
+   * are cleared as part of the logout process.
    */
   static async logout(): Promise<{ error: any }> {
     const { data: { user } } = await supabase.auth.getUser();
     
     if (user) {
-      // STEP 1: Cancel all pending scheduled tasks FIRST
-      // This prevents "overdue" tasks from accumulating when tokens are cleared
-      console.log('🗑️ Cancelling pending scheduled tasks before logout...');
-      const { error: cancelError, count } = await ((supabase
-        .from('scheduled_posts') as any)
-        .update({ 
-          status: 'cancelled',
-          error_message: 'Cancelled due to user logout'
-        })
-        .eq('user_id', user.id)
-        .eq('status', 'pending')
-        .select('id'));
-
-      if (cancelError) {
-        console.error('Error cancelling scheduled tasks:', cancelError);
-        // Continue with logout even if cancelling tasks fails
-      } else {
-        console.log(`✅ Cancelled ${count?.length || 0} pending scheduled tasks`);
-      }
-
-      // STEP 2: Clear Twitter data from profile
-      console.log('🔓 Clearing Twitter connection...');
-      const { error: profileError } = await ((supabase
+      // Check if Agent Mode is enabled
+      const { data: profile } = await ((supabase
         .from('profiles') as any)
-        .update({
-          twitter_user_id: null,
-          twitter_username: null,
-          twitter_access_token: null,
-          twitter_refresh_token: null,
-          twitter_connected_at: null,
-        })
-        .eq('id', user.id));
+        .select('agent_settings')
+        .eq('id', user.id)
+        .single());
 
-      if (profileError) {
-        console.error('Error clearing Twitter data:', profileError);
-        // Continue with logout even if clearing Twitter data fails
+      const agentSettings = profile?.agent_settings as AgentSettings | null;
+      const agentModeEnabled = agentSettings?.enabled === true;
+
+      if (agentModeEnabled) {
+        // Agent Mode is enabled - preserve Twitter tokens for scheduled actions
+        // Scheduled actions will continue to execute even when user is logged out
+        console.log('🤖 Agent Mode active - preserving Twitter connection for scheduled actions');
+        console.log('💡 Scheduled actions will continue executing while you are logged out');
+        console.log('💡 To disconnect Twitter, disable Agent Mode first or use "Disconnect Twitter" button');
+        
+        // Only clear session-related OAuth state from storage
+        // Keep tokens in database so scheduled actions can execute
+      } else {
+        // Agent Mode is disabled - safe to cancel tasks and clear tokens
+        console.log('🗑️ Agent Mode disabled - cancelling pending scheduled tasks...');
+        
+        // Cancel all pending scheduled tasks
+        const { error: cancelError, count } = await ((supabase
+          .from('scheduled_posts') as any)
+          .update({ 
+            status: 'cancelled',
+            error_message: 'Cancelled due to user logout'
+          })
+          .eq('user_id', user.id)
+          .eq('status', 'pending')
+          .select('id'));
+
+        if (cancelError) {
+          console.error('Error cancelling scheduled tasks:', cancelError);
+          // Continue with logout even if cancelling tasks fails
+        } else {
+          console.log(`✅ Cancelled ${count?.length || 0} pending scheduled tasks`);
+        }
+
+        // Clear Twitter data from profile
+        console.log('🔓 Clearing Twitter connection...');
+        const { error: profileError } = await ((supabase
+          .from('profiles') as any)
+          .update({
+            twitter_user_id: null,
+            twitter_username: null,
+            twitter_access_token: null,
+            twitter_refresh_token: null,
+            twitter_connected_at: null,
+          })
+          .eq('id', user.id));
+
+        if (profileError) {
+          console.error('Error clearing Twitter data:', profileError);
+          // Continue with logout even if clearing Twitter data fails
+        } else {
+          console.log('✅ Twitter connection cleared');
+        }
       }
     }
 
     // Clear ALL OAuth state from both localStorage and sessionStorage
+    // This clears session-related data but doesn't affect database tokens
     AuthService.clearAllOAuthState();
 
-    // Sign out from Supabase
+    // Sign out from Supabase (clears auth session)
     const { error } = await supabase.auth.signOut();
     return { error };
   }

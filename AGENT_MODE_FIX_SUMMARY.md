@@ -33,39 +33,63 @@
 
 ## ✅ Fixes Applied
 
-### 1. **Logout Now Cancels Pending Tasks First**
+### 1. **Smart Logout Behavior - Preserves Tokens if Agent Mode Enabled** (Updated 2025-01-28)
 
 **File:** `src/services/auth.ts`
 
-Before clearing Twitter tokens, we now cancel all pending scheduled tasks:
+**Previous Behavior:** Always cancelled tasks and cleared tokens on logout (counter-productive for Agent Mode)
+
+**New Behavior:** Conditionally preserves Twitter tokens based on Agent Mode status:
 
 ```typescript
 static async logout(): Promise<{ error: any }> {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (user) {
-    // STEP 1: Cancel all pending scheduled tasks FIRST
-    await supabase
-      .from('scheduled_posts')
-      .update({ 
-        status: 'cancelled',
-        error_message: 'Cancelled due to user logout'
-      })
-      .eq('user_id', user.id)
-      .eq('status', 'pending');
+    // Check if Agent Mode is enabled
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('agent_settings')
+      .eq('id', user.id)
+      .single();
 
-    // STEP 2: Then clear Twitter tokens
-    await supabase.from('profiles').update({
-      twitter_user_id: null,
-      twitter_access_token: null,
-      twitter_refresh_token: null,
-      // ... other fields
-    }).eq('id', user.id);
+    const agentSettings = profile?.agent_settings as AgentSettings | null;
+    const agentModeEnabled = agentSettings?.enabled === true;
+
+    if (agentModeEnabled) {
+      // Agent Mode enabled - preserve Twitter tokens
+      // Scheduled actions will continue executing even when logged out
+      console.log('🤖 Agent Mode active - preserving Twitter connection');
+    } else {
+      // Agent Mode disabled - cancel tasks and clear tokens
+      await supabase
+        .from('scheduled_posts')
+        .update({ 
+          status: 'cancelled',
+          error_message: 'Cancelled due to user logout'
+        })
+        .eq('user_id', user.id)
+        .eq('status', 'pending');
+
+      await supabase.from('profiles').update({
+        twitter_user_id: null,
+        twitter_access_token: null,
+        twitter_refresh_token: null,
+        // ... other fields
+      }).eq('id', user.id);
+    }
   }
   
-  // Continue with logout...
+  // Sign out from Supabase (clears session)
+  await supabase.auth.signOut();
 }
 ```
+
+**Benefits:**
+- ✅ Agent Mode works autonomously even when users are logged out
+- ✅ Users can switch accounts without breaking scheduled actions
+- ✅ Scheduled actions continue executing in the background
+- ✅ Only clears tokens when Agent Mode is disabled (original behavior preserved)
 
 ### 2. **Auto-Cleanup of Overdue Tasks on Load**
 
@@ -127,17 +151,25 @@ Authorization: Bearer Sonara2026!
    - Dashboard → Project Settings → Edge Functions → Secrets
    - Ensure `CRON_SECRET = Sonara2026!`
 
-2. [ ] **Test Logout Flow**
+2. [ ] **Test Logout Flow with Agent Mode Enabled**
    - Schedule some tasks via Agent Mode
+   - Log out (tokens should be preserved)
+   - Wait for scheduled time to pass
+   - Verify tasks execute successfully even while logged out
+   - Log back in and check history - tasks should show as "posted" (not "cancelled")
+
+3. [ ] **Test Logout Flow with Agent Mode Disabled**
+   - Disable Agent Mode
+   - Schedule some tasks manually
    - Log out
    - Log back in
    - Verify tasks show as "cancelled" in history (not "pending")
 
-3. [ ] **Test Overdue Cleanup**
+4. [ ] **Test Overdue Cleanup**
    - If any overdue tasks exist, they should auto-cancel when page loads
    - Check console for "🧹 Auto-cleaned X overdue tasks"
 
-4. [ ] **Test New Agent Mode Session**
+5. [ ] **Test New Agent Mode Session**
    - Log in with a fresh account
    - Enable Agent Mode
    - Configure target accounts
@@ -171,9 +203,10 @@ Authorization: Bearer Sonara2026!
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ User logs out                                               │
-│ → All pending tasks cancelled FIRST                         │
-│ → Then tokens cleared                                       │
-│ → No orphaned tasks left behind                             │
+│ → Check Agent Mode status                                   │
+│ → If enabled: Preserve Twitter tokens                       │
+│ → If disabled: Cancel tasks and clear tokens                │
+│ → Scheduled actions continue if Agent Mode enabled          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -189,8 +222,14 @@ Authorization: Bearer Sonara2026!
 
 ## 🎯 Result
 
-- ✅ Logout no longer leaves orphaned tasks
+- ✅ **Agent Mode works autonomously** - Scheduled actions execute even when users are logged out
+- ✅ **Account switching supported** - Users can log out to switch accounts without breaking scheduled actions
+- ✅ **Smart token management** - Tokens preserved when Agent Mode enabled, cleared when disabled
 - ✅ Overdue tasks are automatically cleaned up
 - ✅ Agent Mode works reliably across login/logout cycles
 - ✅ Works for multiple accounts without interference
+
+## 🔄 Updated Behavior (2025-01-28)
+
+**Key Change:** Logout now preserves Twitter tokens if Agent Mode is enabled, allowing scheduled actions to continue executing autonomously. This fixes the counter-productive behavior where logout would cancel all scheduled actions, breaking the autonomous nature of Agent Mode.
 
