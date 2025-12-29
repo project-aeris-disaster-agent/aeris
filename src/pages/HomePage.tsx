@@ -977,6 +977,7 @@ export function HomePage() {
                 <AutomationQueue 
                   userId={user?.id || ''} 
                   isVisible={hasAlterEgo}
+                  agentModeEnabled={agentModeEnabled}
                 />
               </div>
             )}

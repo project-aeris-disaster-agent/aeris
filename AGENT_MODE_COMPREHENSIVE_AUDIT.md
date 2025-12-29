@@ -179,20 +179,16 @@ SELECT cron.schedule(
 ### Cron Schedules
 
 **Vercel Cron (`vercel.json`):**
-```13:22:vercel.json
+```13:17:vercel.json
 "crons": [
   {
     "path": "/api/cron/process-agent",
     "schedule": "0 9 * * *"
-  },
-  {
-    "path": "/api/cron/process-posts",
-    "schedule": "0 10 * * *"
   }
 ]
 ```
 
-**Note:** The `process-posts` cron in Vercel is redundant (pg_cron handles this), but kept as backup.
+**Note:** The `process-posts` cron was removed from Vercel as it's redundant. pg_cron handles post execution every 5 minutes, which is more frequent and reliable.
 
 ### Database Schema
 

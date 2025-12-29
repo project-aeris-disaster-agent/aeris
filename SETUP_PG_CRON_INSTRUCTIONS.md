@@ -65,7 +65,8 @@
 ### Files Modified:
 1. **`vercel.json`**
    - ✅ Removed `/api/cron/process-posts` (replaced by pg_cron)
-   - ✅ Kept `/api/cron/process-agent` (runs every 6 hours for agent discovery)
+   - ✅ Kept `/api/cron/process-agent` (runs daily at 9 AM UTC for agent discovery)
+   - ✅ pg_cron also runs `process-agent-actions` every 6 hours (supplemental)
 
 2. **New Migration:**
    - ✅ `supabase/migrations/20250122_setup_pg_cron_scheduler.sql`

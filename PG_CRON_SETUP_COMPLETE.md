@@ -99,8 +99,9 @@ ORDER BY scheduled_for ASC;
    - Current usage: ~8,640 calls/month (1.7% of limit) ✅
 
 3. **Vercel Cron:**
-   - Removed `/api/cron/process-posts` from vercel.json
-   - Kept `/api/cron/process-agent` (runs every 6 hours)
+   - ✅ Removed `/api/cron/process-posts` from vercel.json (redundant - pg_cron handles this)
+   - ✅ Kept `/api/cron/process-agent` (runs daily at 9 AM UTC as primary)
+   - ✅ pg_cron also runs `process-agent-actions` every 6 hours (supplemental)
 
 ## 🎉 Success!
 

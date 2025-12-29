@@ -146,7 +146,28 @@ function calculateRandomizedScheduleTime(
   lastRunAt: Date | null
 ): Date {
   const now = new Date();
-  const base = lastRunAt || now;
+  
+  // First run optimization: schedule 1-4 hours in future for immediate feedback
+  if (!lastRunAt) {
+    const minHours = 1;
+    const maxHours = 4;
+    const randomHours = minHours + Math.random() * (maxHours - minHours);
+    const scheduledTime = new Date(now.getTime() + randomHours * 60 * 60 * 1000);
+    
+    // Ensure within active hours (9 AM - 9 PM)
+    const hour = scheduledTime.getHours();
+    if (hour < 9) {
+      scheduledTime.setHours(9, Math.floor(Math.random() * 60), 0);
+    }
+    if (hour >= 21) {
+      scheduledTime.setHours(20, Math.floor(Math.random() * 60), 0);
+    }
+    
+    return scheduledTime;
+  }
+
+  // Subsequent runs - use normal frequency-based delays
+  const base = lastRunAt;
 
   // Define min/max hours for each frequency with jitter
   let minHours: number, maxHours: number;
@@ -479,16 +500,11 @@ async function processUserAgentActions(
       user.twitter_refresh_token
     );
 
-    // Fetch character card for mention generation
+    // Get character card from pre-fetched data (optimized query)
     let characterCard: { name: string; bio: string[]; style: { post: string[] } } | null = null;
     if (settings.actions.mention) {
-      const { data: cardData } = await supabaseAdmin
-        .from('character_cards')
-        .select('card_data')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .single();
-
+      // Character cards are already fetched in the main query
+      const cardData = (user as any).character_cards?.find((card: any) => card.is_active);
       if (cardData?.card_data) {
         characterCard = cardData.card_data as typeof characterCard;
       }
@@ -680,10 +696,62 @@ serve(async (req) => {
   try {
     const supabaseAdmin = createSupabaseAdmin();
 
-    // Fetch all users with agent mode enabled
+    // Check for manual trigger (single user processing)
+    let body: { userId?: string } = {};
+    try {
+      body = await req.json();
+    } catch {
+      // Body is optional, continue with normal processing
+    }
+
+    // If userId is provided, process only that user (manual trigger)
+    if (body.userId) {
+      const { data: user, error: userError } = await supabaseAdmin
+        .from('profiles')
+        .select(`
+          id,
+          twitter_access_token,
+          twitter_refresh_token,
+          twitter_user_id,
+          agent_settings,
+          character_cards!left(card_data, is_active)
+        `)
+        .eq('id', body.userId)
+        .eq('agent_settings->>enabled', 'true')
+        .single();
+
+      if (userError || !user) {
+        return new Response(
+          JSON.stringify({ error: 'user_not_found', details: 'User not found or agent mode not enabled' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const result = await processUserAgentActions(supabaseAdmin, user as UserWithAgentSettings);
+      return new Response(
+        JSON.stringify({
+          processed: result.status === 'processed' ? 1 : 0,
+          skipped: result.status === 'skipped' ? 1 : 0,
+          failed: result.status === 'failed' ? 1 : 0,
+          totalActionsScheduled: result.actionsScheduled,
+          results: [result],
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Normal processing: Fetch all users with agent mode enabled
+    // Optimized: Fetch character cards in same query to reduce database round trips
     const { data: users, error: fetchError } = await supabaseAdmin
       .from('profiles')
-      .select('id, twitter_access_token, twitter_refresh_token, twitter_user_id, agent_settings')
+      .select(`
+        id,
+        twitter_access_token,
+        twitter_refresh_token,
+        twitter_user_id,
+        agent_settings,
+        character_cards!left(card_data, is_active)
+      `)
       .not('agent_settings', 'is', null)
       .eq('agent_settings->>enabled', 'true');
 
@@ -705,12 +773,23 @@ serve(async (req) => {
     console.log(`Processing agent actions for ${users.length} users...`);
 
     const results: ProcessResult[] = [];
-
-    for (const user of users as UserWithAgentSettings[]) {
-      console.log(`Processing user ${user.id}...`);
-      const result = await processUserAgentActions(supabaseAdmin, user);
-      results.push(result);
-      console.log(`User ${user.id} result: ${result.status}, actions: ${result.actionsScheduled}`);
+    
+    // Process users in parallel batches for better performance
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < users.length; i += BATCH_SIZE) {
+      const batch = (users as UserWithAgentSettings[]).slice(i, i + BATCH_SIZE);
+      console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1} (${batch.length} users)...`);
+      
+      const batchResults = await Promise.all(
+        batch.map(async (user) => {
+          console.log(`Processing user ${user.id}...`);
+          const result = await processUserAgentActions(supabaseAdmin, user);
+          console.log(`User ${user.id} result: ${result.status}, actions: ${result.actionsScheduled}`);
+          return result;
+        })
+      );
+      
+      results.push(...batchResults);
     }
 
     const processedCount = results.filter((r) => r.status === 'processed').length;

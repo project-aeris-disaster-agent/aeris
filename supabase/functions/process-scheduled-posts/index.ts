@@ -23,6 +23,10 @@ const SUPABASE_SERVICE_ROLE_KEY =
 const TWITTER_CLIENT_ID = Deno.env.get('TWITTER_CLIENT_ID') ?? '';
 const TWITTER_CLIENT_SECRET = Deno.env.get('TWITTER_CLIENT_SECRET') ?? '';
 
+// Token cache to avoid redundant token refresh calls within a batch
+// Key: userId, Value: valid access token
+const tokenCache = new Map<string, string>();
+
 // Extended post types including engagement actions
 type ScheduledPostType = 'tweet' | 'reply' | 'thread' | 'retweet' | 'like' | 'comment';
 
@@ -37,6 +41,8 @@ interface ScheduledPostRow {
   error_message: string | null;
   post_metadata: Record<string, unknown> | null;
   target_tweet_id: string | null; // For retweet, like, comment actions
+  retry_count?: number; // Number of retry attempts
+  last_retry_at?: string | null; // Timestamp of last retry
 }
 
 interface UserProfile {
@@ -324,13 +330,20 @@ async function processPost(
   }
 
   try {
-    // Refresh token if needed
-    const accessToken = await refreshTokenIfNeeded(
-      supabaseAdmin,
-      post.user_id,
-      userProfile.twitter_access_token,
-      userProfile.twitter_refresh_token
-    );
+    // Check token cache first to avoid redundant refresh calls
+    let accessToken = tokenCache.get(post.user_id);
+    
+    if (!accessToken) {
+      // Refresh token if needed and cache it
+      accessToken = await refreshTokenIfNeeded(
+        supabaseAdmin,
+        post.user_id,
+        userProfile.twitter_access_token,
+        userProfile.twitter_refresh_token
+      );
+      // Cache the token for this batch processing cycle
+      tokenCache.set(post.user_id, accessToken);
+    }
 
     // Execute the Twitter action
     const result = await executeTwitterAction(
@@ -340,22 +353,56 @@ async function processPost(
     );
 
     if (!result.success) {
-      await supabaseAdmin
-        .from('scheduled_posts')
-        .update({
-          status: 'failed',
-          error_message: result.error || 'Unknown error',
-        })
-        .eq('id', post.id)
-        .eq('status', 'pending');
+      const retryCount = (post.retry_count || 0);
+      const maxRetries = 3;
+      
+      // Check if we should retry (max 3 attempts)
+      if (retryCount < maxRetries) {
+        // Calculate exponential backoff: 1h, 2h, 4h
+        const retryDelayHours = Math.pow(2, retryCount);
+        const retryDelayMs = retryDelayHours * 60 * 60 * 1000;
+        const newScheduledFor = new Date(Date.now() + retryDelayMs).toISOString();
+        
+        await supabaseAdmin
+          .from('scheduled_posts')
+          .update({
+            retry_count: retryCount + 1,
+            last_retry_at: now,
+            scheduled_for: newScheduledFor,
+            status: 'pending', // Reset to pending for retry
+            error_message: `Retry ${retryCount + 1}/${maxRetries}: ${result.error || 'Unknown error'}`,
+          })
+          .eq('id', post.id)
+          .eq('status', 'pending');
 
-      return {
-        id: post.id,
-        platform,
-        action: post.post_type,
-        status: 'failed',
-        error: result.error,
-      };
+        console.log(`Scheduled retry ${retryCount + 1}/${maxRetries} for post ${post.id} in ${retryDelayHours} hours`);
+        
+        return {
+          id: post.id,
+          platform,
+          action: post.post_type,
+          status: 'skipped', // Mark as skipped since it's being retried
+          error: `Will retry in ${retryDelayHours} hours: ${result.error}`,
+        };
+      } else {
+        // Max retries reached - mark as permanently failed
+        await supabaseAdmin
+          .from('scheduled_posts')
+          .update({
+            status: 'failed',
+            error_message: result.error || 'Unknown error (max retries exceeded)',
+          })
+          .eq('id', post.id)
+          .eq('status', 'pending');
+
+        return {
+          id: post.id,
+          platform,
+          action: post.post_type,
+          status: 'failed',
+          error: result.error,
+        };
+      }
     }
 
     // Success - update post status
@@ -386,23 +433,56 @@ async function processPost(
     console.error(`Unexpected error processing ${post.post_type} for post ${post.id}:`, error);
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const retryCount = (post.retry_count || 0);
+    const maxRetries = 3;
 
-    await supabaseAdmin
-      .from('scheduled_posts')
-      .update({
+    // Check if we should retry (max 3 attempts)
+    if (retryCount < maxRetries) {
+      // Calculate exponential backoff: 1h, 2h, 4h
+      const retryDelayHours = Math.pow(2, retryCount);
+      const retryDelayMs = retryDelayHours * 60 * 60 * 1000;
+      const newScheduledFor = new Date(Date.now() + retryDelayMs).toISOString();
+      
+      await supabaseAdmin
+        .from('scheduled_posts')
+        .update({
+          retry_count: retryCount + 1,
+          last_retry_at: new Date().toISOString(),
+          scheduled_for: newScheduledFor,
+          status: 'pending', // Reset to pending for retry
+          error_message: `Retry ${retryCount + 1}/${maxRetries}: ${errorMessage}`,
+        })
+        .eq('id', post.id)
+        .eq('status', 'pending');
+
+      console.log(`Scheduled retry ${retryCount + 1}/${maxRetries} for post ${post.id} in ${retryDelayHours} hours`);
+      
+      return {
+        id: post.id,
+        platform,
+        action: post.post_type,
+        status: 'skipped', // Mark as skipped since it's being retried
+        error: `Will retry in ${retryDelayHours} hours: ${errorMessage}`,
+      };
+    } else {
+      // Max retries reached - mark as permanently failed
+      await supabaseAdmin
+        .from('scheduled_posts')
+        .update({
+          status: 'failed',
+          error_message: errorMessage + ' (max retries exceeded)',
+        })
+        .eq('id', post.id)
+        .eq('status', 'pending');
+
+      return {
+        id: post.id,
+        platform,
+        action: post.post_type,
         status: 'failed',
-        error_message: errorMessage,
-      })
-      .eq('id', post.id)
-      .eq('status', 'pending');
-
-    return {
-      id: post.id,
-      platform,
-      action: post.post_type,
-      status: 'failed',
-      error: errorMessage,
-    };
+        error: errorMessage,
+      };
+    }
   }
 }
 
@@ -468,6 +548,9 @@ serve(async (req) => {
     const nowIso = new Date().toISOString();
     const nowDate = new Date();
 
+    // Clear token cache at start of each batch processing cycle
+    tokenCache.clear();
+
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:461',message:'Edge function called',data:{nowIso,nowDate:nowDate.toISOString(),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
     // #endregion
@@ -479,7 +562,7 @@ serve(async (req) => {
       .eq('status', 'pending')
       .lte('scheduled_for', nowIso)
       .order('scheduled_for', { ascending: true })
-      .limit(20);
+      .limit(50);
 
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'supabase/functions/process-scheduled-posts/index.ts:471',message:'Query executed',data:{pendingPostsCount:pendingPosts?.length||0,hasError:!!fetchError,errorMessage:fetchError?.message,queryTime:nowIso},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});

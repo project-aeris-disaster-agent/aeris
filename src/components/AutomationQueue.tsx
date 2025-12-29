@@ -31,6 +31,7 @@ const db = supabase as SupabaseClient<any>;
 interface AutomationQueueProps {
   userId: string;
   isVisible?: boolean;
+  agentModeEnabled?: boolean; // External agent mode state to sync with
 }
 
 // Action type icons and colors
@@ -46,7 +47,7 @@ const ACTION_CONFIG: Record<ScheduledPostType, { icon: typeof Send; color: strin
 // Tab type
 type TabType = 'pending' | 'history';
 
-export function AutomationQueue({ userId, isVisible = true }: AutomationQueueProps) {
+export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: externalAgentModeEnabled }: AutomationQueueProps) {
   const { showSuccess, showError } = useNotifications();
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('pending');
@@ -159,6 +160,40 @@ export function AutomationQueue({ userId, isVisible = true }: AutomationQueuePro
     }
   }, [userId]);
 
+  // Refresh when external agent mode state changes (from AutomationDropdown toggle)
+  useEffect(() => {
+    if (userId && externalAgentModeEnabled !== undefined) {
+      // Sync internal state with external state
+      setAgentModeEnabled(externalAgentModeEnabled);
+      
+      // Refresh agent settings and recalculate predicted actions
+      getAgentSettings(userId)
+        .then((settings) => {
+          // Use external state if provided, otherwise use settings from DB
+          const enabled = externalAgentModeEnabled !== undefined ? externalAgentModeEnabled : settings.enabled;
+          setAgentModeEnabled(enabled);
+          
+          if (enabled) {
+            const predicted = calculatePredictedAgentActions(settings);
+            setPredictedActions(predicted);
+          } else {
+            setPredictedActions([]);
+          }
+          
+          return getAgentActivityStats(userId);
+        })
+        .then((stats) => {
+          setAgentStats({
+            pendingActions: stats.pendingActions,
+            lastRunAt: stats.lastRunAt,
+          });
+        })
+        .catch((error) => {
+          console.error('Failed to refresh agent settings:', error);
+        });
+    }
+  }, [externalAgentModeEnabled, userId]);
+
   // Fetch on mount and when expanded
   useEffect(() => {
     if (isExpanded) {
@@ -170,7 +205,11 @@ export function AutomationQueue({ userId, isVisible = true }: AutomationQueuePro
           getAgentSettings(userId),
           getAgentActivityStats(userId)
         ]).then(([settings, stats]) => {
-          if (settings.enabled) {
+          // Use external state if provided, otherwise use settings from DB
+          const enabled = externalAgentModeEnabled !== undefined ? externalAgentModeEnabled : settings.enabled;
+          setAgentModeEnabled(enabled);
+          
+          if (enabled) {
             const predicted = calculatePredictedAgentActions(settings);
             setPredictedActions(predicted);
           } else {
@@ -185,7 +224,7 @@ export function AutomationQueue({ userId, isVisible = true }: AutomationQueuePro
         });
       }
     }
-  }, [isExpanded, userId]);
+  }, [isExpanded, userId, externalAgentModeEnabled]);
 
   // Auto-refresh every 30 seconds when expanded
   useEffect(() => {
