@@ -604,11 +604,14 @@ export async function getEngagementMetrics(
   }, {} as Record<string, { count: number; totalScore: number }>);
 
   const topPerformingActions = Object.entries(actionGroups)
-    .map(([actionType, stats]: [string, { count: number; totalScore: number }]) => ({
-      actionType,
-      count: stats.count,
-      avgScore: stats.count > 0 ? stats.totalScore / stats.count : 0,
-    }))
+    .map(([actionType, stats]) => {
+      const typedStats = stats as { count: number; totalScore: number };
+      return {
+        actionType,
+        count: typedStats.count,
+        avgScore: typedStats.count > 0 ? typedStats.totalScore / typedStats.count : 0,
+      };
+    })
     .sort((a, b) => b.avgScore - a.avgScore);
 
   return {
