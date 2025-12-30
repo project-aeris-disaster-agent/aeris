@@ -5,6 +5,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { generateResponse, type CharacterCard } from '../_shared/generateResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -531,14 +532,12 @@ async function fetchThreadContext(
 }
 
 /**
- * Generate a reply tweet using Grok API with thread context
+ * Generate a reply tweet using shared response generation (now with same intelligence as chat)
  */
 async function generateMentionReply(
   targetTweet: TwitterTweet,
   targetUsername: string,
-  characterCardName: string,
-  characterBio: string[],
-  postStyle: string[],
+  characterCard: CharacterCard,
   accessToken?: string
 ): Promise<string | null> {
   if (!GROK_API_KEY) {
@@ -555,72 +554,33 @@ async function generateMentionReply(
         .slice(0, 5)
         .map((t) => `@${targetUsername}: ${t.text}`)
         .join('\n\n');
-      threadContext = `\n\nThread context:\n${threadTexts}`;
+      threadContext = threadTexts;
     }
   }
 
-  const systemPrompt = `You are ${characterCardName}. Your personality: ${characterBio.slice(0, 2).join(' ')}. 
-Your communication style: ${postStyle.slice(0, 3).join(', ')}.
-Generate a short, authentic reply (max 200 characters) to the following tweet. Be engaging but not spammy.
-${threadContext ? 'Consider the thread context when crafting your reply.' : ''}
-
-CRITICAL URL RULES - MUST FOLLOW:
-- DO NOT include ANY URLs or links in your reply
-- DO NOT make up or fabricate website addresses
-- DO NOT include placeholder links like "[link]" or domain names you're not 100% certain about
-- If you want to direct the user somewhere, do NOT add a URL - just engage with their content
-- NEVER guess or hallucinate domain names`;
-
-  const userPrompt = `Tweet from @${targetUsername}: "${targetTweet.text}"${threadContext}
-
-Generate a reply that sounds natural and adds value to the conversation. DO NOT include any URLs or web links.`;
+  // Get recent replies from scheduled_posts to avoid repetition
+  // Note: This would require a database query, but for now we'll rely on the shared function's
+  // anti-repetition logic which works on the conversation history passed to it
+  const recentResponses: string[] = []; // Could be enhanced to fetch from DB
 
   try {
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROK_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'grok-3-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        max_tokens: 100,
-        temperature: 0.8,
-      }),
+    // Use shared response generation with Twitter mode
+    const result = await generateResponse({
+      characterCard,
+      userMessage: targetTweet.text,
+      context: threadContext,
+      recentResponses,
+      maxLength: 280, // Twitter character limit
+      enforceOneSentence: false, // Twitter replies can be longer if needed
+      mode: 'twitter',
+      grokApiKey: GROK_API_KEY,
     });
 
-    if (!response.ok) {
-      console.error('Grok API error:', response.status);
+    if (!result) {
       return null;
     }
 
-    const data = await response.json();
-    let reply = data.choices?.[0]?.message?.content?.trim();
-    
-    if (!reply) return null;
-    
-    // CRITICAL: Strip any fabricated URLs from the generated reply
-    const urlPattern = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(com|net|org|io|co|xyz|gg|dev|app|link|me|info|biz|us|uk|tv|fm|ly|to|cc|sh|be|ai|vc|gl|ws|so|club|online|site|tech|space|world|zone|live|digital|network|page|pro|work)[^\s]*/gi;
-    const placeholderPattern = /\[link\]|\[url\]|yourlinkhere|yourlink|linkhere|checkitout\.com|example\.com|yoursite\.[a-z]+/gi;
-    
-    const originalReply = reply;
-    reply = reply.replace(urlPattern, '').replace(placeholderPattern, '');
-    reply = reply.replace(/\s{2,}/g, ' ').replace(/:\s*$/, '').trim();
-    
-    if (originalReply !== reply) {
-      console.log(`⚠️ URL stripped from generated reply for @${targetUsername}`);
-    }
-    
-    // Ensure reply is not too long
-    if (reply.length > 280) {
-      return reply.substring(0, 277) + '...';
-    }
-    
-    return reply || null;
+    return result.response;
   } catch (error) {
     console.error('Error generating mention reply:', error);
     return null;
@@ -934,7 +894,7 @@ async function processUserAgentActions(
     );
 
     // Get character card from pre-fetched data (optimized query)
-    let characterCard: { name: string; bio: string[]; style: { post: string[] } } | null = null;
+    let characterCard: CharacterCard | null = null;
     if (settings.actions.mention) {
       // Character cards are already fetched in the main query
       const cardData = (user as any).character_cards?.find((card: any) => card.is_active);
@@ -1122,15 +1082,11 @@ async function processUserAgentActions(
               continue;
             }
 
-            // Generate reply content with thread context
-            // Generate reply content with thread context
+            // Generate reply content with thread context using shared response generation
             const replyContent = await generateMentionReply(
               tweet,
               targetUsername,
-              characterCard.name,
-              characterCard.bio,
-              characterCard.style.post,
-              accessToken
+              characterCard as CharacterCard,
               accessToken
             );
 
