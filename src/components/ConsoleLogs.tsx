@@ -20,14 +20,13 @@ import {
   ExternalLink,
   History,
   XCircle,
+  Filter,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import type { ScheduledPostsRow, ScheduledPostType } from '@/types/database';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { getAgentSettings, getAgentActivityStats, calculatePredictedAgentActions, type PredictedAgentAction } from '@/services/agentService';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = supabase as SupabaseClient<any>;
+import { useScheduledTasks } from '@/hooks/useScheduledTasks';
+import { usePredictedActions } from '@/hooks/usePredictedActions';
+import { getSourceLabel, getTwitterLink, formatScheduledTime, formatTime } from '@/utils/taskUtils';
+import { checkTwitterConnectivity, checkLLMConnectivity, checkAgentStatus } from '@/services/connectivityService';
 
 interface ConsoleLogsProps {
   isOpen: boolean;
@@ -55,13 +54,7 @@ interface ConnectivityStatus {
   };
 }
 
-interface ErrorLog {
-  id: string;
-  type: 'scheduled_post' | 'system';
-  message: string;
-  timestamp: Date;
-  metadata?: Record<string, unknown>;
-}
+type HistoryFilter = 'all' | 'success' | 'failed';
 
 const ACTION_CONFIG: Record<ScheduledPostType, { icon: typeof Send; color: string; label: string }> = {
   tweet: { icon: Send, color: 'text-blue-400', label: 'Tweet' },
@@ -73,90 +66,34 @@ const ACTION_CONFIG: Record<ScheduledPostType, { icon: typeof Send; color: strin
 };
 
 export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: ConsoleLogsProps) {
-  const [activeTab, setActiveTab] = useState<'tasks' | 'history' | 'status' | 'errors' | 'report'>('tasks');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'history' | 'status' | 'report'>('tasks');
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [ongoingTasks, setOngoingTasks] = useState<ScheduledPostsRow[]>([]);
-  const [completedTasks, setCompletedTasks] = useState<ScheduledPostsRow[]>([]);
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
   const [connectivityStatus, setConnectivityStatus] = useState<ConnectivityStatus>({
     twitter: { status: 'checking', lastChecked: null },
     agent: { status: 'checking', enabled: false, lastRun: null, pendingActions: 0 },
     llm: { status: 'checking', lastChecked: null },
   });
-  const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
   const [reportText, setReportText] = useState('');
-  const [predictedActions, setPredictedActions] = useState<PredictedAgentAction[]>([]);
-  
+
+  // Use shared hooks for task data
+  const { pending: ongoingTasks, completed: completedTasks, refresh: refreshTasks } = useScheduledTasks({
+    userId,
+    enabled: isOpen,
+    pendingLimit: 50,
+    completedLimit: 100,
+  });
+
+  // Use shared hook for predicted actions
+  const { predictedActions, dismissAction, refresh: refreshPredicted } = usePredictedActions({
+    userId,
+    enabled: isOpen,
+    pendingTasks: ongoingTasks, // This will be updated when ongoingTasks changes
+  });
+
   // Handle cancel predicted action
   const handleCancelPredicted = (predictedId: string) => {
-    setPredictedActions(prev => prev.filter(p => p.id !== predictedId));
-  };
-  
-  // Get source label helper
-  const getSourceLabel = (post: ScheduledPostsRow): string => {
-    const metadata = post.post_metadata as Record<string, unknown> | null;
-    if (metadata?.generated_by === 'agent_mode' || metadata?.generated_by === 'agent_mode_predicted') return 'Agent';
-    if (metadata?.generated_by === 'ai') return 'AI';
-    return 'Manual';
-  };
-
-  // Fetch ongoing tasks and calculate predicted actions
-  const fetchOngoingTasks = async () => {
-    if (!userId) return;
-    try {
-      // Fetch pending tasks
-      const { data: pending, error: pendingError } = await db
-        .from('scheduled_posts')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('status', 'pending')
-        .order('scheduled_for', { ascending: true })
-        .limit(50);
-
-      if (pendingError) throw pendingError;
-      setOngoingTasks(pending || []);
-      
-      // Fetch completed tasks (posted + failed)
-      const { data: completed, error: completedError } = await db
-        .from('scheduled_posts')
-        .select('*')
-        .eq('user_id', userId)
-        .in('status', ['posted', 'failed'])
-        .order('posted_at', { ascending: false, nullsFirst: false })
-        .order('scheduled_for', { ascending: false })
-        .limit(100);
-
-      if (completedError) throw completedError;
-      setCompletedTasks(completed || []);
-      
-      // Load agent settings and calculate predicted actions
-      const settings = await getAgentSettings(userId);
-      
-      if (settings.enabled) {
-        const predicted = calculatePredictedAgentActions(settings);
-        setPredictedActions(predicted);
-      } else {
-        setPredictedActions([]);
-      }
-    } catch (error) {
-      console.error('Failed to fetch tasks:', error);
-    }
-  };
-
-  // Generate Twitter link for a post
-  const getTwitterLink = (post: ScheduledPostsRow): string | null => {
-    const metadata = post.post_metadata as Record<string, unknown> | null;
-    const twitterPostId = metadata?.twitter_post_id as string;
-    
-    if (twitterPostId) {
-      return `https://x.com/i/status/${twitterPostId}`;
-    }
-    
-    // For retweet/like, link to the target tweet
-    if (post.target_tweet_id && (post.post_type === 'retweet' || post.post_type === 'like')) {
-      return `https://x.com/i/status/${post.target_tweet_id}`;
-    }
-    
-    return null;
+    dismissAction(predictedId);
   };
 
   // Check connectivity status
@@ -169,100 +106,42 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
       twitter: { status: 'checking', lastChecked: null },
     }));
 
-    // Check Twitter API - simplified check (just verify token exists)
-    // Full API connectivity test would require backend endpoint due to CORS
-    if (twitterAccessToken) {
-      // Token exists - mark as connected
-      // Note: This doesn't verify token validity, but indicates token is present
-      setConnectivityStatus(prev => ({
-        ...prev,
-        twitter: { status: 'connected', lastChecked: new Date() },
-      }));
-    } else {
-      setConnectivityStatus(prev => ({
-        ...prev,
-        twitter: { status: 'disconnected', lastChecked: new Date(), error: 'No token configured' },
-      }));
-    }
-
-    // Check Agent Status
-    try {
-      const agentSettings = await getAgentSettings(userId);
-      const agentStats = await getAgentActivityStats(userId);
-      
-      setConnectivityStatus(prev => ({
-        ...prev,
-        agent: {
-          status: agentSettings.enabled ? 'active' : 'inactive',
-          enabled: agentSettings.enabled,
-          lastRun: agentStats.lastRunAt,
-          pendingActions: agentStats.pendingActions,
-        },
-      }));
-    } catch (error) {
-      console.error('Failed to check agent status:', error);
-      setConnectivityStatus(prev => ({
-        ...prev,
-        agent: {
-          status: 'inactive',
-          enabled: false,
-          lastRun: null,
-          pendingActions: 0,
-        },
-      }));
-    }
-
-    // Check LLM Status (assume available if Grok API key is configured)
-    // We'll just mark it as available since we can't directly test it from frontend
+    const twitterStatus = await checkTwitterConnectivity(twitterAccessToken);
     setConnectivityStatus(prev => ({
       ...prev,
-      llm: { 
-        status: 'available', 
-        lastChecked: new Date(),
+      twitter: twitterStatus,
+    }));
+
+    // Check Agent Status
+    const agentStatus = await checkAgentStatus(userId);
+    setConnectivityStatus(prev => ({
+      ...prev,
+      agent: {
+        ...agentStatus,
+        status: agentStatus.status,
       },
+    }));
+
+    // Check LLM Status
+    setConnectivityStatus(prev => ({
+      ...prev,
+      llm: { status: 'checking', lastChecked: null },
+    }));
+    const llmStatus = await checkLLMConnectivity();
+    setConnectivityStatus(prev => ({
+      ...prev,
+      llm: llmStatus,
     }));
 
     setIsRefreshing(false);
   };
 
-  // Fetch error logs
-  const fetchErrorLogs = async () => {
-    if (!userId) return;
-    try {
-      const { data, error } = await db
-        .from('scheduled_posts')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('status', 'failed')
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (error) throw error;
-
-      const errors: ErrorLog[] = (data || []).map((post: ScheduledPostsRow) => ({
-        id: post.id,
-        type: 'scheduled_post',
-        message: post.error_message || 'Unknown error',
-        timestamp: new Date(post.created_at),
-        metadata: {
-          post_type: post.post_type,
-          content: post.content,
-          scheduled_for: post.scheduled_for,
-        },
-      }));
-
-      setErrorLogs(errors);
-    } catch (error) {
-      console.error('Failed to fetch error logs:', error);
-    }
-  };
-
   // Refresh all data
   const handleRefresh = async () => {
     await Promise.all([
-      fetchOngoingTasks(),
+      refreshTasks(),
       checkConnectivityStatus(),
-      fetchErrorLogs(),
+      refreshPredicted(),
     ]);
   };
 
@@ -270,42 +149,18 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
   useEffect(() => {
     if (isOpen && userId) {
       handleRefresh();
-      // Auto-refresh every 30 seconds
-      const interval = setInterval(handleRefresh, 30000);
-      return () => clearInterval(interval);
     }
   }, [isOpen, userId]);
 
-  // Format time
-  const formatTime = (date: Date | null): string => {
-    if (!date) return 'Never';
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
+  // Filter completed tasks based on history filter
+  const filteredCompletedTasks = completedTasks.filter((task) => {
+    if (historyFilter === 'all') return true;
+    if (historyFilter === 'success') return task.status === 'posted';
+    if (historyFilter === 'failed') return task.status === 'failed';
+    return true;
+  });
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return `${diffDays}d ago`;
-  };
-
-  // Format scheduled time
-  const formatScheduledTime = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = date.getTime() - now.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 0) return 'Overdue';
-    if (diffMins < 60) return `In ${diffMins}m`;
-    if (diffHours < 24) return `In ${diffHours}h`;
-    if (diffDays < 7) return `In ${diffDays}d`;
-    return date.toLocaleDateString();
-  };
+  const failedTasksCount = completedTasks.filter(t => t.status === 'failed').length;
 
   if (!isOpen) return null;
 
@@ -363,9 +218,8 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
             <div className="flex items-center gap-1 px-6 py-3 border-b border-white/10 bg-black/40 overflow-x-auto">
               {[
                 { id: 'tasks' as const, label: 'Pending', icon: Calendar, count: ongoingTasks.length },
-                { id: 'history' as const, label: 'History', icon: History, count: completedTasks.length },
+                { id: 'history' as const, label: 'History', icon: History, count: completedTasks.length, failedCount: failedTasksCount },
                 { id: 'status' as const, label: 'Status', icon: Activity },
-                { id: 'errors' as const, label: 'Errors', icon: AlertCircle, count: errorLogs.length },
                 { id: 'report' as const, label: 'Report', icon: Send },
               ].map((tab) => {
                 const Icon = tab.icon;
@@ -383,7 +237,9 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                     <span className="text-sm font-medium">{tab.label}</span>
                     {'count' in tab && tab.count !== undefined && tab.count > 0 && (
                       <span className={`px-1.5 py-0.5 rounded-full text-xs ${
-                        tab.id === 'errors' ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white/60'
+                        'failedCount' in tab && tab.failedCount && tab.failedCount > 0
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-white/10 text-white/60'
                       }`}>
                         {tab.count}
                       </span>
@@ -397,43 +253,24 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
             <div className="flex-1 overflow-y-auto p-6">
               {/* Ongoing Tasks Tab */}
               {activeTab === 'tasks' && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-white font-semibold">Automation Queue</h3>
-                    <div className="flex items-center gap-3">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-white font-medium text-sm">Automation Queue</h3>
+                    <div className="flex items-center gap-2 text-xs">
                       {connectivityStatus.agent.enabled && (
-                        <div className="flex items-center gap-1.5 px-2 py-1 bg-green-500/10 border border-green-500/20 rounded-lg">
-                          <Bot className="w-3 h-3 text-green-400" />
-                          <span className="text-green-400 text-xs font-medium">
-                            {connectivityStatus.agent.pendingActions} agent
-                          </span>
+                        <div className="flex items-center gap-1 text-green-400/70">
+                          <Bot className="w-3 h-3" />
+                          <span>{connectivityStatus.agent.pendingActions}</span>
                         </div>
                       )}
-                      <span className="text-white/50 text-sm">{ongoingTasks.length} pending</span>
+                      <span className="text-white/40">{ongoingTasks.length} pending</span>
                     </div>
                   </div>
                   {(() => {
+                    // Predicted actions are already filtered by the hook
                     // Combine actual tasks with predicted actions
-                    const actualAgentTasks = ongoingTasks.filter(
-                      (t) => (t.post_metadata as Record<string, unknown>)?.generated_by === 'agent_mode'
-                    );
-                    const actualAgentKeys = new Set(
-                      actualAgentTasks.map((t) => {
-                        const metadata = t.post_metadata as Record<string, unknown> | null;
-                        const targetAccount = metadata?.target_account as string || '';
-                        const actionType = t.post_type;
-                        return `${targetAccount}-${actionType}`;
-                      })
-                    );
 
-                    const filteredPredicted = connectivityStatus.agent.enabled && predictedActions.length > 0
-                      ? predictedActions.filter((pred) => {
-                          const key = `${pred.targetAccount}-${pred.actionType}`;
-                          return !actualAgentKeys.has(key);
-                        })
-                      : [];
-
-                    const allTasks = [...ongoingTasks, ...filteredPredicted.map((pred) => ({
+                    const allTasks = [...ongoingTasks, ...predictedActions.map((pred) => ({
                       id: pred.id,
                       user_id: userId,
                       content: pred.actionType === 'comment' ? 'Generated reply will appear here' : '',
@@ -482,7 +319,7 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                         )}
                       </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="space-y-1">
                         {allTasks.map((task) => {
                           const isPredicted = (task.post_metadata as Record<string, unknown>)?.is_predicted === true;
                           const metadata = task.post_metadata as Record<string, unknown> | null;
@@ -495,71 +332,57 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                           return (
                             <div
                               key={task.id}
-                              className={`p-4 rounded-xl border ${
+                              className={`p-2 rounded border ${
                                 isPredicted
-                                  ? 'bg-yellow-500/5 border-yellow-500/30 border-dashed'
+                                  ? 'bg-yellow-500/5 border-yellow-500/20 border-dashed'
                                   : isAgent
-                                  ? 'bg-green-500/5 border-green-500/20'
-                                  : 'bg-white/5 border-white/10'
+                                  ? 'bg-green-500/5 border-green-500/10'
+                                  : 'bg-white/5 border-white/5'
                               }`}
                             >
-                              <div className="flex items-start gap-3">
-                                <div className={`p-2 rounded-lg ${
-                                  isPredicted ? 'bg-yellow-500/20' : isAgent ? 'bg-green-500/20' : 'bg-white/10'
+                              <div className="flex items-center gap-2">
+                                <Icon className={`w-3.5 h-3.5 ${config.color} flex-shrink-0`} />
+                                <span className={`text-xs font-medium ${config.color}`}>
+                                  {config.label}
+                                </span>
+                                {targetAccount && (
+                                  <span className="text-white/40 text-xs">@{targetAccount}</span>
+                                )}
+                                <span className={`text-xs ${
+                                  isPredicted
+                                    ? 'text-yellow-400/70'
+                                    : isAgent
+                                    ? 'text-green-400/70'
+                                    : 'text-white/40'
                                 }`}>
-                                  <Icon className={`w-4 h-4 ${config.color}`} />
+                                  {sourceLabel}
+                                </span>
+                                {isPredicted && (
+                                  <span className="text-yellow-400/60 text-xs italic">
+                                    Upcoming
+                                  </span>
+                                )}
+                                <div className="flex items-center gap-1.5 text-white/30 text-xs ml-auto">
+                                  <Clock className="w-3 h-3" />
+                                  <span>{formatScheduledTime(task.scheduled_for)}</span>
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                    <span className={`text-sm font-medium ${config.color}`}>
-                                      {config.label}
-                                    </span>
-                                    {targetAccount && (
-                                      <span className="text-white/50 text-xs">@{targetAccount}</span>
-                                    )}
-                                    <span className={`px-2 py-0.5 rounded text-xs ${
-                                      isPredicted
-                                        ? 'bg-yellow-500/20 text-yellow-400'
-                                        : isAgent
-                                        ? 'bg-green-500/20 text-green-400'
-                                        : 'bg-white/10 text-white/50'
-                                    }`}>
-                                      {sourceLabel}
-                                    </span>
-                                  </div>
-                                  {task.content && (
-                                    <p className="text-white/70 text-sm mb-2 line-clamp-2">
-                                      {task.content}
-                                    </p>
-                                  )}
-                                  {isPredicted && (
-                                    <p className="text-yellow-400/70 text-xs mb-2 italic">
-                                      Will be scheduled on next cron run
-                                    </p>
-                                  )}
-                                  <div className="flex items-center gap-4 text-white/40 text-xs">
-                                    <div className="flex items-center gap-1">
-                                      <Clock className="w-3 h-3" />
-                                      <span>{formatScheduledTime(task.scheduled_for)}</span>
-                                    </div>
-                                    <span>{new Date(task.scheduled_for).toLocaleString()}</span>
-                                  </div>
-                                </div>
-                              </div>
-                              {/* Delete button for predicted actions */}
-                              {isPredicted && (
-                                <div className="flex items-center">
+                                {isPredicted && (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleCancelPredicted(task.id);
                                     }}
-                                    className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 transition-colors"
-                                    title="Remove predicted action"
+                                    className="p-1 rounded hover:bg-red-500/20 text-red-400/70 hover:text-red-400 transition-colors"
+                                    title="Remove"
                                   >
-                                    <X className="w-4 h-4" />
+                                    <X className="w-3 h-3" />
                                   </button>
-                                </div>
+                                )}
+                              </div>
+                              {task.content && (
+                                <p className="text-white/50 text-xs mt-1 line-clamp-1 pl-5.5">
+                                  {task.content}
+                                </p>
                               )}
                             </div>
                           );
@@ -570,29 +393,70 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                 </div>
               )}
 
-              {/* Activity History Tab */}
+              {/* Activity History Tab (consolidated with Errors) */}
               {activeTab === 'history' && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-white font-semibold">Activity History</h3>
-                    <div className="flex items-center gap-3">
-                      <span className="text-green-400 text-sm">
-                        {completedTasks.filter(t => t.status === 'posted').length} success
-                      </span>
-                      <span className="text-red-400 text-sm">
-                        {completedTasks.filter(t => t.status === 'failed').length} failed
-                      </span>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-white font-medium text-sm">Activity History</h3>
+                    <div className="flex items-center gap-2">
+                      {/* Filter buttons */}
+                      <div className="flex items-center gap-0.5 bg-white/5 rounded p-0.5 border border-white/10">
+                        <button
+                          onClick={() => setHistoryFilter('all')}
+                          className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
+                            historyFilter === 'all'
+                              ? 'bg-white/10 text-white'
+                              : 'text-white/50 hover:text-white/70'
+                          }`}
+                        >
+                          All
+                        </button>
+                        <button
+                          onClick={() => setHistoryFilter('success')}
+                          className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
+                            historyFilter === 'success'
+                              ? 'bg-green-500/20 text-green-400'
+                              : 'text-white/50 hover:text-white/70'
+                          }`}
+                        >
+                          Success
+                        </button>
+                        <button
+                          onClick={() => setHistoryFilter('failed')}
+                          className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
+                            historyFilter === 'failed'
+                              ? 'bg-red-500/20 text-red-400'
+                              : 'text-white/50 hover:text-white/70'
+                          }`}
+                        >
+                          Failed
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-green-400/70">
+                          {completedTasks.filter(t => t.status === 'posted').length}
+                        </span>
+                        <span className="text-red-400/70">
+                          {completedTasks.filter(t => t.status === 'failed').length}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                  {completedTasks.length === 0 ? (
+                  {filteredCompletedTasks.length === 0 ? (
                     <div className="text-center py-12">
                       <History className="w-12 h-12 text-white/20 mx-auto mb-3" />
-                      <p className="text-white/50 text-sm">No activity history</p>
+                      <p className="text-white/50 text-sm">
+                        {historyFilter === 'all' 
+                          ? 'No activity history' 
+                          : historyFilter === 'success'
+                          ? 'No successful actions yet'
+                          : 'No failed actions'}
+                      </p>
                       <p className="text-white/30 text-xs mt-1">Completed actions will appear here with links</p>
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      {completedTasks.map((task) => {
+                    <div className="space-y-1">
+                      {filteredCompletedTasks.map((task) => {
                         const config = ACTION_CONFIG[task.post_type] || ACTION_CONFIG.tweet;
                         const Icon = config.icon;
                         const sourceLabel = getSourceLabel(task);
@@ -605,73 +469,60 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                         return (
                           <div
                             key={task.id}
-                            className={`p-4 rounded-xl border ${
+                            className={`p-2 rounded border ${
                               isSuccess
-                                ? 'bg-green-500/5 border-green-500/20'
-                                : 'bg-red-500/5 border-red-500/20'
+                                ? 'bg-green-500/5 border-green-500/10'
+                                : 'bg-red-500/5 border-red-500/10'
                             }`}
                           >
-                            <div className="flex items-start gap-3">
-                              <div className={`p-2 rounded-lg ${
-                                isSuccess ? 'bg-green-500/20' : 'bg-red-500/20'
+                            <div className="flex items-center gap-2">
+                              {isSuccess ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                              ) : (
+                                <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                              )}
+                              <Icon className={`w-3.5 h-3.5 ${config.color} flex-shrink-0`} />
+                              <span className={`text-xs font-medium ${config.color}`}>
+                                {config.label}
+                              </span>
+                              {targetAccount && (
+                                <span className="text-white/40 text-xs">@{targetAccount}</span>
+                              )}
+                              {isAgent && (
+                                <span className="text-green-400/70 text-xs">Agent</span>
+                              )}
+                              <span className={`text-xs ${
+                                isSuccess ? 'text-green-400/70' : 'text-red-400/70'
                               }`}>
-                                {isSuccess ? (
-                                  <CheckCircle2 className="w-4 h-4 text-green-400" />
-                                ) : (
-                                  <XCircle className="w-4 h-4 text-red-400" />
-                                )}
+                                {isSuccess ? 'Success' : 'Failed'}
+                              </span>
+                              <div className="flex items-center gap-1.5 text-white/30 text-xs ml-auto">
+                                <Clock className="w-3 h-3" />
+                                <span>{formatTime(task.posted_at ? new Date(task.posted_at) : new Date(task.scheduled_for))}</span>
                               </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                  <Icon className={`w-4 h-4 ${config.color}`} />
-                                  <span className={`text-sm font-medium ${config.color}`}>
-                                    {config.label}
-                                  </span>
-                                  {targetAccount && (
-                                    <span className="text-white/50 text-xs">@{targetAccount}</span>
-                                  )}
-                                  {isAgent && (
-                                    <span className="px-2 py-0.5 rounded text-xs bg-green-500/20 text-green-400">
-                                      Agent
-                                    </span>
-                                  )}
-                                  <span className={`px-2 py-0.5 rounded text-xs ${
-                                    isSuccess ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                                  }`}>
-                                    {isSuccess ? 'Success' : 'Failed'}
-                                  </span>
-                                </div>
-                                {task.content && (
-                                  <p className="text-white/70 text-sm mb-2 line-clamp-2">
-                                    {task.content}
-                                  </p>
-                                )}
-                                {!isSuccess && task.error_message && (
-                                  <p className="text-red-400/80 text-xs mb-2">
-                                    Error: {task.error_message}
-                                  </p>
-                                )}
-                                <div className="flex items-center gap-4 text-white/40 text-xs">
-                                  <div className="flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    <span>{formatTime(task.posted_at ? new Date(task.posted_at) : new Date(task.scheduled_for))}</span>
-                                  </div>
-                                  <span>{new Date(task.posted_at || task.scheduled_for).toLocaleString()}</span>
-                                  {twitterLink && isSuccess && (
-                                    <a
-                                      href={twitterLink}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 ml-auto"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <ExternalLink className="w-3 h-3" />
-                                      View on X
-                                    </a>
-                                  )}
-                                </div>
-                              </div>
+                              {twitterLink && isSuccess && (
+                                <a
+                                  href={twitterLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1 rounded hover:bg-cyan-500/20 text-cyan-400/70 hover:text-cyan-400 transition-colors"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title="View on X"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
                             </div>
+                            {task.content && (
+                              <p className="text-white/50 text-xs mt-1 line-clamp-1 pl-7">
+                                {task.content}
+                              </p>
+                            )}
+                            {!isSuccess && task.error_message && (
+                              <p className="text-red-400/70 text-xs mt-1 line-clamp-1 pl-7">
+                                {task.error_message}
+                              </p>
+                            )}
                           </div>
                         );
                       })}
@@ -780,55 +631,6 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                       <p className="text-red-400 text-xs mt-2">{connectivityStatus.llm.error}</p>
                     )}
                   </div>
-                </div>
-              )}
-
-              {/* Error Logs Tab */}
-              {activeTab === 'errors' && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-white font-semibold">Error Logs</h3>
-                    <span className="text-white/50 text-sm">{errorLogs.length} errors</span>
-                  </div>
-                  {errorLogs.length === 0 ? (
-                    <div className="text-center py-12">
-                      <CheckCircle2 className="w-12 h-12 text-green-400/30 mx-auto mb-3" />
-                      <p className="text-white/50 text-sm">No errors found</p>
-                      <p className="text-white/30 text-xs mt-1">All systems operational</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {errorLogs.map((error) => (
-                        <div
-                          key={error.id}
-                          className="p-4 rounded-xl bg-red-500/5 border border-red-500/20"
-                        >
-                          <div className="flex items-start gap-3">
-                            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-white font-medium text-sm">{error.type}</span>
-                                <span className="text-white/40 text-xs">
-                                  {formatTime(error.timestamp)}
-                                </span>
-                              </div>
-                              <p className="text-white/70 text-sm mb-2">{error.message}</p>
-                              {error.metadata && (
-                                <details className="mt-2">
-                                  <summary className="text-white/50 text-xs cursor-pointer hover:text-white/70">
-                                    Details
-                                  </summary>
-                                  <pre className="mt-2 text-xs text-white/40 bg-black/30 p-2 rounded overflow-x-auto">
-                                    {JSON.stringify(error.metadata, null, 2)}
-                                  </pre>
-                                </details>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
 

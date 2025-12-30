@@ -1,6 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database';
 
+// Helper function to sanitize environment variable (remove quotes, newlines, whitespace)
+function sanitizeEnvVar(value: string | undefined): string | undefined {
+  if (!value || typeof value !== 'string') return undefined;
+  // Remove quotes (both single and double), newlines, carriage returns, and trim
+  return value
+    .replace(/^["']|["']$/g, '') // Remove surrounding quotes
+    .replace(/\r\n|\r|\n/g, '') // Remove newlines
+    .trim(); // Remove leading/trailing whitespace
+}
+
 // Helper function to validate URL
 function isValidUrl(url: string | undefined): boolean {
   if (!url || typeof url !== 'string') return false;
@@ -14,12 +24,12 @@ function isValidUrl(url: string | undefined): boolean {
   }
 }
 
-// Get and trim environment variables
+// Get and sanitize environment variables
 const rawSupabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const rawSupabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-const supabaseUrl = rawSupabaseUrl?.trim();
-const supabaseAnonKey = rawSupabaseAnonKey?.trim();
+const supabaseUrl = sanitizeEnvVar(rawSupabaseUrl);
+const supabaseAnonKey = sanitizeEnvVar(rawSupabaseAnonKey);
 
 // Validate URL format
 const isValidSupabaseUrl = isValidUrl(supabaseUrl);
@@ -87,6 +97,10 @@ try {
 }
 
 export { supabase };
+
+// Export sanitized URL and key for use in other files (prevents malformed URLs)
+export const getSupabaseUrl = (): string | undefined => supabaseUrl;
+export const getSupabaseAnonKey = (): string | undefined => supabaseAnonKey;
 
 // Helper function to get current user
 export const getCurrentUser = async () => {

@@ -24,10 +24,55 @@ const TWITTER_CLIENT_ID = Deno.env.get('TWITTER_CLIENT_ID') ?? '';
 const TWITTER_CLIENT_SECRET = Deno.env.get('TWITTER_CLIENT_SECRET') ?? '';
 const GROK_API_KEY = Deno.env.get('GROK_API_KEY') ?? '';
 
-// Agent settings type
+// Agent settings type (matches TypeScript definition)
+interface TargetAccountConfig {
+  username: string;
+  priority?: 'high' | 'medium' | 'low';
+  actions?: {
+    retweet?: boolean;
+    like?: boolean;
+    mention?: boolean;
+  };
+  lastEngagedAt?: string | null;
+}
+
+interface ContentFilterConfig {
+  keywords?: string[];
+  negativeKeywords?: string[];
+  minEngagement?: {
+    likes?: number;
+    retweets?: number;
+  };
+  sentimentFilter?: 'positive' | 'neutral' | 'all';
+  tweetTypes?: ('original' | 'reply' | 'retweet')[];
+  topicMatching?: boolean;
+}
+
+interface RateLimitConfig {
+  maxPerAccountPerDay?: number;
+  maxGlobalPerDay?: number;
+  cooldownAfterHighEngagement?: {
+    threshold: number;
+    pauseHours: number;
+  };
+  safeMode?: boolean;
+}
+
+interface SchedulingConfig {
+  timezone?: string;
+  activeHours?: {
+    start: number;
+    end: number;
+  };
+  quietHours?: {
+    start: number;
+    end: number;
+  };
+}
+
 interface AgentSettings {
   enabled: boolean;
-  targetAccounts: string[];
+  targetAccounts: (string | TargetAccountConfig)[];
   actions: {
     retweet: boolean;
     like: boolean;
@@ -35,6 +80,9 @@ interface AgentSettings {
   };
   frequency: 'daily' | '3days' | 'weekly';
   lastRunAt: string | null;
+  contentFilter?: ContentFilterConfig;
+  rateLimits?: RateLimitConfig;
+  scheduling?: SchedulingConfig;
 }
 
 interface UserWithAgentSettings {
@@ -50,6 +98,17 @@ interface TwitterTweet {
   text: string;
   author_id: string;
   created_at: string;
+  public_metrics?: {
+    like_count?: number;
+    retweet_count?: number;
+    reply_count?: number;
+    quote_count?: number;
+  };
+  in_reply_to_user_id?: string;
+  referenced_tweets?: Array<{
+    type: 'replied_to' | 'retweeted' | 'quoted';
+    id: string;
+  }>;
 }
 
 interface ProcessResult {
@@ -138,29 +197,73 @@ async function refreshTokenIfNeeded(
 }
 
 /**
+ * Convert timezone-aware date to UTC
+ */
+function toUTC(date: Date, timezone?: string): Date {
+  if (!timezone) return date;
+  
+  // Simple timezone offset conversion (for production, use a proper timezone library)
+  // This is a simplified version - in production, use Intl.DateTimeFormat or a library
+  const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
+  const tzDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
+  const offset = tzDate.getTime() - utcDate.getTime();
+  
+  return new Date(date.getTime() - offset);
+}
+
+/**
+ * Get hour in specific timezone
+ */
+function getHourInTimezone(date: Date, timezone?: string): number {
+  if (!timezone) return date.getUTCHours();
+  
+  // Convert to timezone-aware hour
+  const tzString = date.toLocaleString('en-US', { 
+    timeZone: timezone, 
+    hour: 'numeric', 
+    hour12: false 
+  });
+  return parseInt(tzString, 10);
+}
+
+/**
  * Calculate randomized schedule time based on frequency
  * Adds jitter to avoid detection by Twitter/X
+ * Supports timezone-aware scheduling
  */
 function calculateRandomizedScheduleTime(
   frequency: 'daily' | '3days' | 'weekly',
-  lastRunAt: Date | null
+  lastRunAt: Date | null,
+  schedulingConfig?: SchedulingConfig
 ): Date {
   const now = new Date();
+  const timezone = schedulingConfig?.timezone;
+  const activeHours = schedulingConfig?.activeHours || { start: 9, end: 21 };
+  const quietHours = schedulingConfig?.quietHours;
   
   // First run optimization: schedule 1-4 hours in future for immediate feedback
   if (!lastRunAt) {
     const minHours = 1;
     const maxHours = 4;
     const randomHours = minHours + Math.random() * (maxHours - minHours);
-    const scheduledTime = new Date(now.getTime() + randomHours * 60 * 60 * 1000);
+    let scheduledTime = new Date(now.getTime() + randomHours * 60 * 60 * 1000);
     
-    // Ensure within active hours (9 AM - 9 PM)
-    const hour = scheduledTime.getHours();
-    if (hour < 9) {
-      scheduledTime.setHours(9, Math.floor(Math.random() * 60), 0);
+    // Ensure within active hours (timezone-aware)
+    const hour = getHourInTimezone(scheduledTime, timezone);
+    if (hour < activeHours.start) {
+      scheduledTime.setUTCHours(activeHours.start, Math.floor(Math.random() * 60), 0);
     }
-    if (hour >= 21) {
-      scheduledTime.setHours(20, Math.floor(Math.random() * 60), 0);
+    if (hour >= activeHours.end) {
+      scheduledTime.setUTCHours(activeHours.end - 1, Math.floor(Math.random() * 60), 0);
+    }
+    
+    // Check quiet hours
+    if (quietHours) {
+      const quietHour = getHourInTimezone(scheduledTime, timezone);
+      if (quietHour >= quietHours.start || quietHour < quietHours.end) {
+        // Move to after quiet hours
+        scheduledTime.setUTCHours(quietHours.end, Math.floor(Math.random() * 60), 0);
+      }
     }
     
     return scheduledTime;
@@ -190,15 +293,24 @@ function calculateRandomizedScheduleTime(
   }
 
   const randomHours = minHours + Math.random() * (maxHours - minHours);
-  const scheduledTime = new Date(base.getTime() + randomHours * 60 * 60 * 1000);
+  let scheduledTime = new Date(base.getTime() + randomHours * 60 * 60 * 1000);
 
-  // Ensure within active hours (9 AM - 9 PM)
-  const hour = scheduledTime.getHours();
-  if (hour < 9) {
-    scheduledTime.setHours(9, Math.floor(Math.random() * 60), 0);
+  // Ensure within active hours (timezone-aware)
+  const hour = getHourInTimezone(scheduledTime, timezone);
+  if (hour < activeHours.start) {
+    scheduledTime.setUTCHours(activeHours.start, Math.floor(Math.random() * 60), 0);
   }
-  if (hour >= 21) {
-    scheduledTime.setHours(20, Math.floor(Math.random() * 60), 0);
+  if (hour >= activeHours.end) {
+    scheduledTime.setUTCHours(activeHours.end - 1, Math.floor(Math.random() * 60), 0);
+  }
+
+  // Check quiet hours
+  if (quietHours) {
+    const quietHour = getHourInTimezone(scheduledTime, timezone);
+    if (quietHour >= quietHours.start || quietHour < quietHours.end) {
+      // Move to after quiet hours
+      scheduledTime.setUTCHours(quietHours.end, Math.floor(Math.random() * 60), 0);
+    }
   }
 
   return scheduledTime;
@@ -274,7 +386,7 @@ async function getTwitterUserIdByUsername(
 }
 
 /**
- * Fetch recent tweets from a target account
+ * Fetch recent tweets from a target account with enhanced fields
  */
 async function fetchTargetAccountTweets(
   targetUserId: string,
@@ -284,7 +396,7 @@ async function fetchTargetAccountTweets(
   const sinceTime = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
   const params = new URLSearchParams({
     max_results: '10',
-    'tweet.fields': 'created_at,author_id',
+    'tweet.fields': 'created_at,author_id,public_metrics,in_reply_to_user_id,referenced_tweets',
     start_time: sinceTime.toISOString(),
   });
 
@@ -305,23 +417,152 @@ async function fetchTargetAccountTweets(
 }
 
 /**
- * Generate a reply tweet using Grok API
+ * Apply content filtering to tweets
+ */
+function filterTweets(
+  tweets: TwitterTweet[],
+  filterConfig?: ContentFilterConfig
+): TwitterTweet[] {
+  if (!filterConfig) return tweets;
+
+  let filtered = [...tweets];
+
+  // Keyword filtering
+  if (filterConfig.keywords && filterConfig.keywords.length > 0) {
+    const keywordsLower = filterConfig.keywords.map((k) => k.toLowerCase());
+    filtered = filtered.filter((tweet) =>
+      keywordsLower.some((keyword) => tweet.text.toLowerCase().includes(keyword))
+    );
+  }
+
+  // Negative keywords
+  if (filterConfig.negativeKeywords && filterConfig.negativeKeywords.length > 0) {
+    const negativeKeywordsLower = filterConfig.negativeKeywords.map((k) => k.toLowerCase());
+    filtered = filtered.filter(
+      (tweet) =>
+        !negativeKeywordsLower.some((keyword) =>
+          tweet.text.toLowerCase().includes(keyword)
+        )
+    );
+  }
+
+  // Engagement thresholds
+  if (filterConfig.minEngagement) {
+    filtered = filtered.filter((tweet) => {
+      const metrics = tweet.public_metrics || {};
+      const likes = metrics.like_count || 0;
+      const retweets = metrics.retweet_count || 0;
+
+      if (
+        filterConfig.minEngagement!.likes !== undefined &&
+        likes < filterConfig.minEngagement!.likes
+      ) {
+        return false;
+      }
+      if (
+        filterConfig.minEngagement!.retweets !== undefined &&
+        retweets < filterConfig.minEngagement!.retweets
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Tweet type filtering
+  if (filterConfig.tweetTypes && filterConfig.tweetTypes.length > 0) {
+    filtered = filtered.filter((tweet) => {
+      const isReply = !!tweet.in_reply_to_user_id;
+      const isRetweet =
+        tweet.referenced_tweets?.some((ref) => ref.type === 'retweeted') || false;
+      const isOriginal = !isReply && !isRetweet;
+
+      if (isOriginal && filterConfig.tweetTypes!.includes('original')) return true;
+      if (isReply && filterConfig.tweetTypes!.includes('reply')) return true;
+      if (isRetweet && filterConfig.tweetTypes!.includes('retweet')) return true;
+      return false;
+    });
+  }
+
+  return filtered;
+}
+
+/**
+ * Fetch thread context for a tweet
+ */
+async function fetchThreadContext(
+  tweetId: string,
+  accessToken: string
+): Promise<{ conversationId: string; threadTweets: TwitterTweet[] } | null> {
+  try {
+    // Get the conversation ID from the tweet
+    const tweetResponse = await fetch(
+      `https://api.twitter.com/2/tweets/${tweetId}?tweet.fields=conversation_id,author_id,public_metrics,in_reply_to_user_id,referenced_tweets`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      }
+    );
+
+    if (!tweetResponse.ok) return null;
+
+    const tweetData = await tweetResponse.json();
+    const conversationId = tweetData.data?.conversation_id;
+
+    if (!conversationId) return null;
+
+    // Fetch conversation thread
+    const threadResponse = await fetch(
+      `https://api.twitter.com/2/tweets/search/recent?query=conversation_id:${conversationId}&tweet.fields=created_at,author_id,public_metrics,in_reply_to_user_id,referenced_tweets&max_results=10`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      }
+    );
+
+    if (!threadResponse.ok) return null;
+
+    const threadData = await threadResponse.json();
+    const threadTweets = (threadData.data || []) as TwitterTweet[];
+
+    return { conversationId, threadTweets };
+  } catch (error) {
+    console.error('Error fetching thread context:', error);
+    return null;
+  }
+}
+
+/**
+ * Generate a reply tweet using Grok API with thread context
  */
 async function generateMentionReply(
   targetTweet: TwitterTweet,
   targetUsername: string,
   characterCardName: string,
   characterBio: string[],
-  postStyle: string[]
+  postStyle: string[],
+  accessToken?: string
 ): Promise<string | null> {
   if (!GROK_API_KEY) {
     console.error('GROK_API_KEY not configured');
     return null;
   }
 
+  // Fetch thread context if available
+  let threadContext = '';
+  if (accessToken && targetTweet.in_reply_to_user_id) {
+    const context = await fetchThreadContext(targetTweet.id, accessToken);
+    if (context && context.threadTweets.length > 1) {
+      const threadTexts = context.threadTweets
+        .slice(0, 5)
+        .map((t) => `@${targetUsername}: ${t.text}`)
+        .join('\n\n');
+      threadContext = `\n\nThread context:\n${threadTexts}`;
+    }
+  }
+
   const systemPrompt = `You are ${characterCardName}. Your personality: ${characterBio.slice(0, 2).join(' ')}. 
 Your communication style: ${postStyle.slice(0, 3).join(', ')}.
 Generate a short, authentic reply (max 200 characters) to the following tweet. Be engaging but not spammy.
+${threadContext ? 'Consider the thread context when crafting your reply.' : ''}
 
 CRITICAL URL RULES - MUST FOLLOW:
 - DO NOT include ANY URLs or links in your reply
@@ -330,7 +571,7 @@ CRITICAL URL RULES - MUST FOLLOW:
 - If you want to direct the user somewhere, do NOT add a URL - just engage with their content
 - NEVER guess or hallucinate domain names`;
 
-  const userPrompt = `Tweet from @${targetUsername}: "${targetTweet.text}"
+  const userPrompt = `Tweet from @${targetUsername}: "${targetTweet.text}"${threadContext}
 
 Generate a reply that sounds natural and adds value to the conversation. DO NOT include any URLs or web links.`;
 
@@ -405,6 +646,198 @@ async function hasAlreadyEngaged(
     .limit(1);
 
   return (data?.length || 0) > 0;
+}
+
+/**
+ * Check rate limits for a user and target account
+ */
+async function checkRateLimits(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
+  targetAccount: string | null,
+  rateLimits?: RateLimitConfig
+): Promise<{ allowed: boolean; reason?: string }> {
+  if (!rateLimits) return { allowed: true };
+
+  const today = new Date().toISOString().split('T')[0];
+
+  // Check global daily limit
+  if (rateLimits.maxGlobalPerDay) {
+    const { data: globalData } = await supabaseAdmin
+      .from('agent_rate_limit_tracking')
+      .select('engagements_today')
+      .eq('user_id', userId)
+      .is('target_account', null)
+      .eq('date', today)
+      .single();
+
+    const globalCount = globalData?.engagements_today || 0;
+    if (globalCount >= rateLimits.maxGlobalPerDay) {
+      return {
+        allowed: false,
+        reason: `Global daily limit reached (${globalCount}/${rateLimits.maxGlobalPerDay})`,
+      };
+    }
+  }
+
+  // Check per-account limit
+  if (targetAccount && rateLimits.maxPerAccountPerDay) {
+    const { data: accountData } = await supabaseAdmin
+      .from('agent_rate_limit_tracking')
+      .select('engagements_today')
+      .eq('user_id', userId)
+      .eq('target_account', targetAccount)
+      .eq('date', today)
+      .single();
+
+    const accountCount = accountData?.engagements_today || 0;
+    if (accountCount >= rateLimits.maxPerAccountPerDay) {
+      return {
+        allowed: false,
+        reason: `Per-account daily limit reached for @${targetAccount} (${accountCount}/${rateLimits.maxPerAccountPerDay})`,
+      };
+    }
+  }
+
+  // Check cooldown
+  if (rateLimits.cooldownAfterHighEngagement) {
+    const { data: cooldownData } = await supabaseAdmin
+      .from('agent_rate_limit_tracking')
+      .select('in_cooldown, cooldown_until')
+      .eq('user_id', userId)
+      .is('target_account', null)
+      .eq('in_cooldown', true)
+      .single();
+
+    if (cooldownData?.in_cooldown) {
+      const cooldownUntil = cooldownData.cooldown_until
+        ? new Date(cooldownData.cooldown_until)
+        : null;
+      if (cooldownUntil && cooldownUntil > new Date()) {
+        return {
+          allowed: false,
+          reason: `In cooldown until ${cooldownUntil.toISOString()}`,
+        };
+      }
+    }
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Increment rate limit tracking
+ */
+async function incrementRateLimit(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
+  targetAccount: string | null,
+  actionType: 'retweet' | 'like' | 'comment',
+  rateLimits?: RateLimitConfig
+): Promise<void> {
+  const today = new Date().toISOString().split('T')[0];
+
+  // Update global tracking
+  const { data: globalData } = await supabaseAdmin
+    .from('agent_rate_limit_tracking')
+    .select('*')
+    .eq('user_id', userId)
+    .is('target_account', null)
+    .eq('date', today)
+    .single();
+
+  const globalEngagements = (globalData?.engagements_today || 0) + 1;
+  const globalRetweets =
+    (globalData?.retweets_today || 0) + (actionType === 'retweet' ? 1 : 0);
+  const globalLikes = (globalData?.likes_today || 0) + (actionType === 'like' ? 1 : 0);
+  const globalComments =
+    (globalData?.comments_today || 0) + (actionType === 'comment' ? 1 : 0);
+
+  // Check for cooldown trigger
+  let inCooldown = globalData?.in_cooldown || false;
+  let cooldownUntil = globalData?.cooldown_until
+    ? new Date(globalData.cooldown_until)
+    : null;
+
+  if (
+    rateLimits?.cooldownAfterHighEngagement &&
+    !inCooldown &&
+    globalEngagements >= rateLimits.cooldownAfterHighEngagement.threshold
+  ) {
+    inCooldown = true;
+    cooldownUntil = new Date(
+      Date.now() + rateLimits.cooldownAfterHighEngagement.pauseHours * 60 * 60 * 1000
+    );
+  }
+
+  if (globalData) {
+    await supabaseAdmin
+      .from('agent_rate_limit_tracking')
+      .update({
+        engagements_today: globalEngagements,
+        retweets_today: globalRetweets,
+        likes_today: globalLikes,
+        comments_today: globalComments,
+        in_cooldown: inCooldown,
+        cooldown_until: cooldownUntil?.toISOString() || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', globalData.id);
+  } else {
+    await supabaseAdmin.from('agent_rate_limit_tracking').insert({
+      user_id: userId,
+      target_account: null,
+      date: today,
+      engagements_today: globalEngagements,
+      retweets_today: globalRetweets,
+      likes_today: globalLikes,
+      comments_today: globalComments,
+      in_cooldown: inCooldown,
+      cooldown_until: cooldownUntil?.toISOString() || null,
+    });
+  }
+
+  // Update per-account tracking
+  if (targetAccount) {
+    const { data: accountData } = await supabaseAdmin
+      .from('agent_rate_limit_tracking')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('target_account', targetAccount)
+      .eq('date', today)
+      .single();
+
+    const accountEngagements = (accountData?.engagements_today || 0) + 1;
+    const accountRetweets =
+      (accountData?.retweets_today || 0) + (actionType === 'retweet' ? 1 : 0);
+    const accountLikes =
+      (accountData?.likes_today || 0) + (actionType === 'like' ? 1 : 0);
+    const accountComments =
+      (accountData?.comments_today || 0) + (actionType === 'comment' ? 1 : 0);
+
+    if (accountData) {
+      await supabaseAdmin
+        .from('agent_rate_limit_tracking')
+        .update({
+          engagements_today: accountEngagements,
+          retweets_today: accountRetweets,
+          likes_today: accountLikes,
+          comments_today: accountComments,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', accountData.id);
+    } else {
+      await supabaseAdmin.from('agent_rate_limit_tracking').insert({
+        user_id: userId,
+        target_account: targetAccount,
+        date: today,
+        engagements_today: accountEngagements,
+        retweets_today: accountRetweets,
+        likes_today: accountLikes,
+        comments_today: accountComments,
+      });
+    }
+  }
 }
 
 /**
@@ -510,15 +943,51 @@ async function processUserAgentActions(
       }
     }
 
+    // Helper to get username from target account (handles both string and config)
+    const getTargetUsername = (account: string | TargetAccountConfig): string => {
+      return typeof account === 'string' ? account : account.username;
+    };
+
+    // Helper to get account-specific actions (falls back to global actions)
+    const getAccountActions = (
+      account: string | TargetAccountConfig,
+      globalActions: AgentSettings['actions']
+    ): AgentSettings['actions'] => {
+      if (typeof account === 'string') return globalActions;
+      return account.actions
+        ? { ...globalActions, ...account.actions }
+        : globalActions;
+    };
+
     let totalActionsScheduled = 0;
-    const baseScheduleTime = calculateRandomizedScheduleTime(settings.frequency, null);
+    const baseScheduleTime = calculateRandomizedScheduleTime(
+      settings.frequency,
+      null,
+      settings.scheduling
+    );
 
     // Process each target account
-    for (const targetUsername of settings.targetAccounts) {
+    for (const targetAccount of settings.targetAccounts) {
+      const targetUsername = getTargetUsername(targetAccount);
+      const accountActions = getAccountActions(targetAccount, settings.actions);
       // Get target user ID
       const targetUserId = await getTwitterUserIdByUsername(targetUsername, accessToken);
       if (!targetUserId) {
         console.log(`Could not find Twitter user: @${targetUsername}`);
+        continue;
+      }
+
+      // Check rate limits for this account
+      const rateLimitCheck = await checkRateLimits(
+        supabaseAdmin,
+        user.id,
+        targetUsername,
+        settings.rateLimits
+      );
+      if (!rateLimitCheck.allowed) {
+        console.log(
+          `Rate limit check failed for @${targetUsername}: ${rateLimitCheck.reason}`
+        );
         continue;
       }
 
@@ -529,13 +998,20 @@ async function processUserAgentActions(
         continue;
       }
 
+      // Apply content filtering
+      const filteredTweets = filterTweets(tweets, settings.contentFilter);
+      if (filteredTweets.length === 0) {
+        console.log(`No tweets passed content filter for @${targetUsername}`);
+        continue;
+      }
+
       // Process the most recent tweet(s) - limit to 1-2 per account per run
-      const tweetsToProcess = tweets.slice(0, 2);
+      const tweetsToProcess = filteredTweets.slice(0, 2);
       let actionIndex = 0;
 
       for (const tweet of tweetsToProcess) {
         // Schedule retweet
-        if (settings.actions.retweet) {
+        if (accountActions.retweet) {
           const alreadyRetweeted = await hasAlreadyEngaged(
             supabaseAdmin,
             user.id,
@@ -544,6 +1020,18 @@ async function processUserAgentActions(
           );
 
           if (!alreadyRetweeted) {
+            // Check rate limit before scheduling
+            const rateCheck = await checkRateLimits(
+              supabaseAdmin,
+              user.id,
+              targetUsername,
+              settings.rateLimits
+            );
+            if (!rateCheck.allowed) {
+              console.log(`Rate limit reached for retweet on @${targetUsername}`);
+              continue;
+            }
+
             const scheduledTime = addActionDelay(baseScheduleTime, actionIndex);
             const success = await scheduleAction(
               supabaseAdmin,
@@ -554,6 +1042,13 @@ async function processUserAgentActions(
               scheduledTime
             );
             if (success) {
+              await incrementRateLimit(
+                supabaseAdmin,
+                user.id,
+                targetUsername,
+                'retweet',
+                settings.rateLimits
+              );
               totalActionsScheduled++;
               actionIndex++;
             }
@@ -561,7 +1056,7 @@ async function processUserAgentActions(
         }
 
         // Schedule like
-        if (settings.actions.like) {
+        if (accountActions.like) {
           const alreadyLiked = await hasAlreadyEngaged(
             supabaseAdmin,
             user.id,
@@ -570,6 +1065,18 @@ async function processUserAgentActions(
           );
 
           if (!alreadyLiked) {
+            // Check rate limit before scheduling
+            const rateCheck = await checkRateLimits(
+              supabaseAdmin,
+              user.id,
+              targetUsername,
+              settings.rateLimits
+            );
+            if (!rateCheck.allowed) {
+              console.log(`Rate limit reached for like on @${targetUsername}`);
+              continue;
+            }
+
             const scheduledTime = addActionDelay(baseScheduleTime, actionIndex);
             const success = await scheduleAction(
               supabaseAdmin,
@@ -580,6 +1087,13 @@ async function processUserAgentActions(
               scheduledTime
             );
             if (success) {
+              await incrementRateLimit(
+                supabaseAdmin,
+                user.id,
+                targetUsername,
+                'like',
+                settings.rateLimits
+              );
               totalActionsScheduled++;
               actionIndex++;
             }
@@ -587,7 +1101,7 @@ async function processUserAgentActions(
         }
 
         // Schedule mention/reply
-        if (settings.actions.mention && characterCard) {
+        if (accountActions.mention && characterCard) {
           const alreadyReplied = await hasAlreadyEngaged(
             supabaseAdmin,
             user.id,
@@ -596,13 +1110,28 @@ async function processUserAgentActions(
           );
 
           if (!alreadyReplied) {
-            // Generate reply content
+            // Check rate limit before scheduling
+            const rateCheck = await checkRateLimits(
+              supabaseAdmin,
+              user.id,
+              targetUsername,
+              settings.rateLimits
+            );
+            if (!rateCheck.allowed) {
+              console.log(`Rate limit reached for comment on @${targetUsername}`);
+              continue;
+            }
+
+            // Generate reply content with thread context
+            // Generate reply content with thread context
             const replyContent = await generateMentionReply(
               tweet,
               targetUsername,
               characterCard.name,
               characterCard.bio,
-              characterCard.style.post
+              characterCard.style.post,
+              accessToken
+              accessToken
             );
 
             if (replyContent) {
@@ -616,6 +1145,13 @@ async function processUserAgentActions(
                 scheduledTime
               );
               if (success) {
+                await incrementRateLimit(
+                  supabaseAdmin,
+                  user.id,
+                  targetUsername,
+                  'comment',
+                  settings.rateLimits
+                );
                 totalActionsScheduled++;
                 actionIndex++;
               }

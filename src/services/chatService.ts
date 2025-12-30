@@ -185,11 +185,11 @@ export async function sendMessage(
   personalityMetadata?: PersonalityMetadata
 ): Promise<SendMessageResponse> {
   try {
-    // 1. Save user message
-    await saveMessage(userId, sessionId, 'user', userMessage);
-
-    // 2. Get recent conversation history for context (limited to prevent context pollution)
+    // 1. Get recent conversation history BEFORE saving user message (to avoid including current message)
     const recentMessages = await getSessionMessages(sessionId, MAX_HISTORY_MESSAGES);
+
+    // 2. Save user message
+    await saveMessage(userId, sessionId, 'user', userMessage);
 
     // 3. Call Edge Function for AI response
     const edgeFunctionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-with-clone`;
@@ -206,7 +206,7 @@ export async function sendMessage(
         message: userMessage,
         character_card: characterCard,
         // Only send the last few messages to prevent context pollution
-        conversation_history: recentMessages.slice(-MAX_HISTORY_MESSAGES).map(m => ({
+        conversation_history: recentMessages.map(m => ({
           role: m.role,
           content: m.content,
         })),
@@ -318,8 +318,8 @@ export async function startNewSession(userId: string): Promise<string> {
 }
 
 // Maximum messages to include in conversation history
-// Lower = more focused responses, less context pollution
-const MAX_HISTORY_MESSAGES = 5;
+// Increased from 5 to 25 for better context awareness and coherent conversations
+const MAX_HISTORY_MESSAGES = 25;
 
 // ============================================================================
 // SESSION HISTORY

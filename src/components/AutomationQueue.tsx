@@ -21,9 +21,12 @@ import {
 import { supabase } from '@/lib/supabase';
 import type { ScheduledPostsRow, ScheduledPostType } from '@/types/database';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getAgentSettings, getAgentActivityStats, calculatePredictedAgentActions, type PredictedAgentAction } from '@/services/agentService';
+import { getAgentActivityStats } from '@/services/agentService';
 import { cleanupOverdueTasks } from '@/services/automationService';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { useScheduledTasks } from '@/hooks/useScheduledTasks';
+import { usePredictedActions } from '@/hooks/usePredictedActions';
+import { getSourceLabel, getTwitterLink, formatScheduledTime, formatPastTime } from '@/utils/taskUtils';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as SupabaseClient<any>;
@@ -51,74 +54,27 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
   const { showSuccess, showError } = useNotifications();
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('pending');
-  const [scheduledPosts, setScheduledPosts] = useState<ScheduledPostsRow[]>([]);
-  const [completedPosts, setCompletedPosts] = useState<ScheduledPostsRow[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [agentModeEnabled, setAgentModeEnabled] = useState(false);
   const [agentStats, setAgentStats] = useState<{ pendingActions: number; lastRunAt: Date | null } | null>(null);
-  const [predictedActions, setPredictedActions] = useState<PredictedAgentAction[]>([]);
 
-  // Fetch scheduled posts (pending)
-  const fetchScheduledPosts = async () => {
-    if (!userId) return;
-    
-    setIsLoading(true);
-    try {
-      const { data, error } = await db
-        .from('scheduled_posts')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('status', 'pending')
-        .order('scheduled_for', { ascending: true })
-        .limit(50);
+  // Use shared hooks for task data
+  const { pending: scheduledPosts, completed: completedPosts, isLoading, refresh: refreshTasks } = useScheduledTasks({
+    userId,
+    enabled: isExpanded,
+    pendingLimit: 50,
+    completedLimit: 100,
+  });
 
-      if (error) throw error;
-      
-      // #region agent log
-      const now = new Date();
-      const overdueCount = (data || []).filter((p: ScheduledPostsRow) => new Date(p.scheduled_for) <= now).length;
-      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/components/AutomationQueue.tsx:fetchScheduledPosts',message:'Fetched pending posts',data:{pendingCount:data?.length||0,overdueCount,nowIso:now.toISOString(),posts:(data||[]).slice(0,5).map((p: ScheduledPostsRow)=>({id:p.id,type:p.post_type,scheduledFor:p.scheduled_for,isOverdue:new Date(p.scheduled_for)<=now,generatedBy:(p.post_metadata as Record<string,unknown>)?.generated_by}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
-      
-      setScheduledPosts(data || []);
-    } catch (error) {
-      console.error('Failed to fetch scheduled posts:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Use shared hook for predicted actions
+  const { predictedActions, dismissAction } = usePredictedActions({
+    userId,
+    enabled: externalAgentModeEnabled !== false,
+    pendingTasks: scheduledPosts,
+  });
 
-  // Fetch completed posts (posted + failed)
-  const fetchCompletedPosts = async () => {
-    if (!userId) return;
-    
-    try {
-      const { data, error } = await db
-        .from('scheduled_posts')
-        .select('*')
-        .eq('user_id', userId)
-        .in('status', ['posted', 'failed'])
-        .order('posted_at', { ascending: false, nullsFirst: false })
-        .order('scheduled_for', { ascending: false })
-        .limit(50);
+  const agentModeEnabled = externalAgentModeEnabled !== undefined ? externalAgentModeEnabled : false;
 
-      if (error) throw error;
-      
-      // #region agent log
-      const successCount = (data || []).filter((p: ScheduledPostsRow) => p.status === 'posted').length;
-      const failCount = (data || []).filter((p: ScheduledPostsRow) => p.status === 'failed').length;
-      const agentModeCount = (data || []).filter((p: ScheduledPostsRow) => (p.post_metadata as Record<string,unknown>)?.generated_by === 'agent_mode').length;
-      fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/components/AutomationQueue.tsx:fetchCompletedPosts',message:'Fetched completed posts',data:{totalCompleted:data?.length||0,successCount,failCount,agentModeCount,recentPosts:(data||[]).slice(0,5).map((p: ScheduledPostsRow)=>({id:p.id,type:p.post_type,status:p.status,postedAt:p.posted_at,errorMessage:p.error_message,generatedBy:(p.post_metadata as Record<string,unknown>)?.generated_by}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      
-      setCompletedPosts(data || []);
-    } catch (error) {
-      console.error('Failed to fetch completed posts:', error);
-    }
-  };
-
-  // Load agent settings and clean up any overdue tasks on mount
+  // Load agent stats and clean up any overdue tasks on mount
   useEffect(() => {
     if (userId) {
       // First, clean up any overdue tasks that failed due to logout/token issues
@@ -133,21 +89,8 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
           console.error('Failed to cleanup overdue tasks:', error);
         });
       
-      // Then load agent settings
-      getAgentSettings(userId)
-        .then((settings) => {
-          setAgentModeEnabled(settings.enabled);
-          
-          // Calculate predicted actions if agent mode is enabled
-          if (settings.enabled) {
-            const predicted = calculatePredictedAgentActions(settings);
-            setPredictedActions(predicted);
-          } else {
-            setPredictedActions([]);
-          }
-          
-          return getAgentActivityStats(userId);
-        })
+      // Load agent stats
+      getAgentActivityStats(userId)
         .then((stats) => {
           setAgentStats({
             pendingActions: stats.pendingActions,
@@ -155,33 +98,15 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
           });
         })
         .catch((error) => {
-          console.error('Failed to load agent settings:', error);
+          console.error('Failed to load agent stats:', error);
         });
     }
   }, [userId]);
 
-  // Refresh when external agent mode state changes (from AutomationDropdown toggle)
+  // Refresh agent stats when expanded
   useEffect(() => {
-    if (userId && externalAgentModeEnabled !== undefined) {
-      // Sync internal state with external state
-      setAgentModeEnabled(externalAgentModeEnabled);
-      
-      // Refresh agent settings and recalculate predicted actions
-      getAgentSettings(userId)
-        .then((settings) => {
-          // Use external state if provided, otherwise use settings from DB
-          const enabled = externalAgentModeEnabled !== undefined ? externalAgentModeEnabled : settings.enabled;
-          setAgentModeEnabled(enabled);
-          
-          if (enabled) {
-            const predicted = calculatePredictedAgentActions(settings);
-            setPredictedActions(predicted);
-          } else {
-            setPredictedActions([]);
-          }
-          
-          return getAgentActivityStats(userId);
-        })
+    if (isExpanded && userId) {
+      getAgentActivityStats(userId)
         .then((stats) => {
           setAgentStats({
             pendingActions: stats.pendingActions,
@@ -189,60 +114,17 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
           });
         })
         .catch((error) => {
-          console.error('Failed to refresh agent settings:', error);
-        });
-    }
-  }, [externalAgentModeEnabled, userId]);
-
-  // Fetch on mount and when expanded
-  useEffect(() => {
-    if (isExpanded) {
-      fetchScheduledPosts();
-      fetchCompletedPosts();
-      // Also refresh agent stats and recalculate predicted actions
-      if (userId) {
-        Promise.all([
-          getAgentSettings(userId),
-          getAgentActivityStats(userId)
-        ]).then(([settings, stats]) => {
-          // Use external state if provided, otherwise use settings from DB
-          const enabled = externalAgentModeEnabled !== undefined ? externalAgentModeEnabled : settings.enabled;
-          setAgentModeEnabled(enabled);
-          
-          if (enabled) {
-            const predicted = calculatePredictedAgentActions(settings);
-            setPredictedActions(predicted);
-          } else {
-            setPredictedActions([]);
-          }
-          setAgentStats({
-            pendingActions: stats.pendingActions,
-            lastRunAt: stats.lastRunAt,
-          });
-        }).catch((error) => {
           console.error('Failed to refresh agent stats:', error);
         });
-      }
     }
-  }, [isExpanded, userId, externalAgentModeEnabled]);
-
-  // Auto-refresh every 30 seconds when expanded
-  useEffect(() => {
-    if (!isExpanded) return;
-    
-    const interval = setInterval(() => {
-      fetchScheduledPosts();
-      fetchCompletedPosts();
-    }, 30000);
-    return () => clearInterval(interval);
   }, [isExpanded, userId]);
 
   // Cancel a scheduled post or predicted action
   const handleCancel = async (postId: string) => {
     // Check if it's a predicted action (starts with "predicted-")
     if (postId.startsWith('predicted-')) {
-      // For predicted actions, just remove from predictedActions state
-      setPredictedActions(prev => prev.filter(p => p.id !== postId));
+      // For predicted actions, dismiss them (they're client-side only)
+      dismissAction(postId);
       showSuccess('Predicted action removed', 3000);
       return;
     }
@@ -266,13 +148,12 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
 
       // Verify the update was successful
       if (data && data.status === 'cancelled') {
-        // Remove from local state
-        setScheduledPosts(prev => prev.filter(p => p.id !== postId));
+        // Refresh tasks to update UI
+        refreshTasks();
         showSuccess('Scheduled action cancelled successfully', 3000);
       } else {
         // Post might have already been cancelled, posted, or failed
-        // Remove from local state anyway
-        setScheduledPosts(prev => prev.filter(p => p.id !== postId));
+        refreshTasks();
         showSuccess('Action removed from queue', 3000);
       }
     } catch (error) {
@@ -286,64 +167,6 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
     } finally {
       setCancellingId(null);
     }
-  };
-
-  // Format scheduled time
-  const formatScheduledTime = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = date.getTime() - now.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffMins < 0) return 'Overdue';
-    if (diffMins < 60) return `In ${diffMins}m`;
-    if (diffHours < 24) return `In ${diffHours}h ${diffMins % 60}m`;
-    if (diffDays < 7) return `In ${diffDays}d ${diffHours % 24}h`;
-    return date.toLocaleDateString();
-  };
-
-  // Format past time
-  const formatPastTime = (dateStr: string | null) => {
-    if (!dateStr) return 'Unknown';
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
-  };
-
-  // Get source label (agent mode vs manual)
-  const getSourceLabel = (post: ScheduledPostsRow) => {
-    const metadata = post.post_metadata as Record<string, unknown> | null;
-    if (metadata?.generated_by === 'agent_mode') return 'Agent';
-    if (metadata?.generated_by === 'ai') return 'AI';
-    return 'Manual';
-  };
-
-  // Generate Twitter link for a post
-  const getTwitterLink = (post: ScheduledPostsRow): string | null => {
-    const metadata = post.post_metadata as Record<string, unknown> | null;
-    const twitterPostId = metadata?.twitter_post_id as string;
-    
-    if (twitterPostId) {
-      return `https://x.com/i/status/${twitterPostId}`;
-    }
-    
-    // For retweet/like, link to the target tweet
-    if (post.target_tweet_id && (post.post_type === 'retweet' || post.post_type === 'like')) {
-      return `https://x.com/i/status/${post.target_tweet_id}`;
-    }
-    
-    return null;
   };
 
   const pendingCount = scheduledPosts.length + predictedActions.filter(
@@ -447,28 +270,9 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
                 {activeTab === 'pending' && (
                   <>
                     {(() => {
-                      // Filter out predicted actions that are already scheduled
-                      const actualAgentPosts = scheduledPosts.filter(
-                        (p) => (p.post_metadata as Record<string, unknown>)?.generated_by === 'agent_mode'
-                      );
-                      const actualAgentPostKeys = new Set(
-                        actualAgentPosts.map((p) => {
-                          const metadata = p.post_metadata as Record<string, unknown> | null;
-                          const targetAccount = metadata?.target_account as string || '';
-                          const actionType = p.post_type;
-                          return `${targetAccount}-${actionType}`;
-                        })
-                      );
+                      // Predicted actions are already filtered by the hook
 
-                      // Only show predicted actions that don't have actual scheduled posts yet
-                      const filteredPredicted = agentModeEnabled && predictedActions.length > 0
-                        ? predictedActions.filter((pred) => {
-                            const key = `${pred.targetAccount}-${pred.actionType}`;
-                            return !actualAgentPostKeys.has(key);
-                          })
-                        : [];
-
-                      const allTasks = [...scheduledPosts, ...filteredPredicted.map((pred) => ({
+                      const allTasks = [...scheduledPosts, ...predictedActions.map((pred) => ({
                         id: pred.id,
                         user_id: userId,
                         content: pred.actionType === 'comment' ? 'Generated reply will appear here' : '',
@@ -570,7 +374,7 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
                                     )}
                                     {isPredicted && (
                                       <p className="text-yellow-400/70 text-[10px] mb-1.5 italic">
-                                        Will be scheduled on next cron run
+                                        Upcoming scheduled action
                                       </p>
                                     )}
                                     <div className="flex items-center gap-1 text-white/40">

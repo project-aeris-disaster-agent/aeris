@@ -23,9 +23,65 @@ export interface TwitterMetrics {
 // Agent Mode settings for automated Twitter engagement
 export type AgentFrequency = 'daily' | '3days' | 'weekly';
 
+// Target account configuration with priority and per-account settings
+export interface TargetAccountConfig {
+  username: string;
+  priority?: 'high' | 'medium' | 'low';
+  actions?: {
+    retweet?: boolean;
+    like?: boolean;
+    mention?: boolean;
+  };
+  lastEngagedAt?: string | null;
+}
+
+// Content filtering configuration
+export interface ContentFilterConfig {
+  keywords?: string[]; // Only engage if tweet contains these keywords
+  negativeKeywords?: string[]; // Skip tweets with these words/phrases
+  minEngagement?: {
+    likes?: number;
+    retweets?: number;
+  };
+  sentimentFilter?: 'positive' | 'neutral' | 'all';
+  tweetTypes?: ('original' | 'reply' | 'retweet')[];
+  topicMatching?: boolean; // Match against character's interests/knowledge
+}
+
+// Rate limiting configuration
+export interface RateLimitConfig {
+  maxPerAccountPerDay?: number; // Max engagements per target account per day
+  maxGlobalPerDay?: number; // Max total engagements per day
+  cooldownAfterHighEngagement?: {
+    threshold: number; // Number of engagements
+    pauseHours: number; // Hours to pause after threshold
+  };
+  safeMode?: boolean; // Automatically reduce frequency
+}
+
+// Timezone and scheduling configuration
+export interface SchedulingConfig {
+  timezone?: string; // User's timezone (e.g., 'America/New_York')
+  activeHours?: {
+    start: number; // Hour of day (0-23)
+    end: number; // Hour of day (0-23)
+  };
+  quietHours?: {
+    start: number;
+    end: number;
+  };
+}
+
+// Action probability configuration
+export interface ActionProbability {
+  retweet?: number; // 0-100, probability of retweeting
+  like?: number; // 0-100, probability of liking
+  mention?: number; // 0-100, probability of commenting
+}
+
 export interface AgentSettings {
   enabled: boolean;
-  targetAccounts: string[]; // Twitter usernames without @
+  targetAccounts: (string | TargetAccountConfig)[]; // Support both old format (string[]) and new format
   actions: {
     retweet: boolean;
     like: boolean;
@@ -33,6 +89,13 @@ export interface AgentSettings {
   };
   frequency: AgentFrequency;
   lastRunAt: string | null;
+  // New fields
+  contentFilter?: ContentFilterConfig;
+  rateLimits?: RateLimitConfig;
+  scheduling?: SchedulingConfig;
+  actionProbabilities?: ActionProbability;
+  manualApproval?: boolean; // Review actions before executing
+  pausedUntil?: string | null; // Pause agent until this date
 }
 
 // ElizaOS Character Card Type (from CHARACTER_CARD_STRUCTURE.md)

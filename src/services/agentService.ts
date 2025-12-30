@@ -2,7 +2,7 @@
 // Manages target accounts, action types, and frequency settings
 
 import { supabase } from '@/lib/supabase';
-import type { AgentSettings, AgentFrequency } from '@/types/database';
+import type { AgentSettings, AgentFrequency, TargetAccountConfig } from '@/types/database';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -32,7 +32,7 @@ export async function getAgentSettings(userId: string): Promise<AgentSettings> {
     .single();
 
   if (error) {
-    console.error('Failed to fetch agent settings:', error);
+    console.error('Failed to fetch agent settings:', error.message || error);
     return DEFAULT_AGENT_SETTINGS;
   }
 
@@ -239,11 +239,49 @@ export async function updateLastRunAt(userId: string): Promise<void> {
 
 /**
  * Validate target accounts (remove @ if present, trim whitespace)
+ * Supports both string[] and TargetAccountConfig[]
  */
-export function normalizeTargetAccounts(accounts: string[]): string[] {
+export function normalizeTargetAccounts(
+  accounts: (string | TargetAccountConfig)[]
+): (string | TargetAccountConfig)[] {
   return accounts
-    .map((account) => account.trim().replace(/^@/, ''))
-    .filter((account) => account.length > 0);
+    .map((account) => {
+      if (typeof account === 'string') {
+        const normalized = account.trim().replace(/^@/, '');
+        return normalized.length > 0 ? normalized : null;
+      } else {
+        // TargetAccountConfig
+        const normalized = account.username.trim().replace(/^@/, '');
+        return normalized.length > 0
+          ? { ...account, username: normalized }
+          : null;
+      }
+    })
+    .filter((account): account is string | TargetAccountConfig => account !== null);
+}
+
+/**
+ * Extract username from target account (handles both string and TargetAccountConfig)
+ */
+export function getTargetAccountUsername(
+  account: string | TargetAccountConfig
+): string {
+  return typeof account === 'string' ? account : account.username;
+}
+
+/**
+ * Get target account config (converts string to config if needed)
+ */
+export function getTargetAccountConfig(
+  account: string | TargetAccountConfig
+): TargetAccountConfig {
+  if (typeof account === 'string') {
+    return {
+      username: account,
+      priority: 'medium',
+    };
+  }
+  return account;
 }
 
 /**
@@ -251,15 +289,19 @@ export function normalizeTargetAccounts(accounts: string[]): string[] {
  */
 export async function addTargetAccounts(
   userId: string,
-  accounts: string[]
+  accounts: (string | TargetAccountConfig)[]
 ): Promise<AgentSettings> {
   const currentSettings = await getAgentSettings(userId);
   const normalizedAccounts = normalizeTargetAccounts(accounts);
   
-  // Merge with existing accounts (avoid duplicates)
-  const allAccounts = [
-    ...new Set([...currentSettings.targetAccounts, ...normalizedAccounts]),
-  ];
+  // Merge with existing accounts (avoid duplicates by username)
+  const existingUsernames = new Set(
+    currentSettings.targetAccounts.map(getTargetAccountUsername)
+  );
+  const newAccounts = normalizedAccounts.filter(
+    (acc) => !existingUsernames.has(getTargetAccountUsername(acc))
+  );
+  const allAccounts = [...currentSettings.targetAccounts, ...newAccounts];
 
   return updateAgentSettings(userId, { targetAccounts: allAccounts });
 }
@@ -272,10 +314,10 @@ export async function removeTargetAccount(
   account: string
 ): Promise<AgentSettings> {
   const currentSettings = await getAgentSettings(userId);
-  const normalizedAccount = account.trim().replace(/^@/, '');
+  const normalizedAccount = account.trim().replace(/^@/, '').toLowerCase();
   
   const filteredAccounts = currentSettings.targetAccounts.filter(
-    (a) => a.toLowerCase() !== normalizedAccount.toLowerCase()
+    (a) => getTargetAccountUsername(a).toLowerCase() !== normalizedAccount
   );
 
   return updateAgentSettings(userId, { targetAccounts: filteredAccounts });
@@ -417,14 +459,15 @@ export function calculatePredictedAgentActions(
 
   // For each target account
   for (const targetAccount of settings.targetAccounts) {
+    const username = getTargetAccountUsername(targetAccount);
     // For each enabled action type
     for (const actionType of enabledActions) {
       const scheduledTime = addActionDelay(baseScheduleTime, globalActionIndex);
       
       predictedActions.push({
-        id: `predicted-${targetAccount}-${actionType}-${globalActionIndex}`,
+        id: `predicted-${username}-${actionType}-${globalActionIndex}`,
         actionType,
-        targetAccount,
+        targetAccount: username,
         predictedScheduleTime: scheduledTime,
         actionIndex: globalActionIndex,
       });
@@ -496,5 +539,129 @@ export async function getAgentActivityStats(userId: string): Promise<AgentActivi
       : null,
     lastRunAt: settings.lastRunAt ? new Date(settings.lastRunAt) : null,
   };
+}
+
+/**
+ * Get engagement metrics for a user
+ */
+export interface EngagementMetrics {
+  totalEngagements: number;
+  totalLikes: number;
+  totalRetweets: number;
+  totalComments: number;
+  averageEngagementScore: number;
+  topPerformingActions: Array<{
+    actionType: string;
+    count: number;
+    avgScore: number;
+  }>;
+}
+
+export async function getEngagementMetrics(
+  userId: string,
+  days: number = 30
+): Promise<EngagementMetrics> {
+  const sinceDate = new Date();
+  sinceDate.setDate(sinceDate.getDate() - days);
+
+  const { data, error } = await db
+    .from('agent_engagement_metrics')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('created_at', sinceDate.toISOString());
+
+  if (error) {
+    console.error('Failed to fetch engagement metrics:', error);
+    return {
+      totalEngagements: 0,
+      totalLikes: 0,
+      totalRetweets: 0,
+      totalComments: 0,
+      averageEngagementScore: 0,
+      topPerformingActions: [],
+    };
+  }
+
+  const metrics = data || [];
+  const totalEngagements = metrics.length;
+  const totalLikes = metrics.reduce((sum, m) => sum + (m.likes_received || 0), 0);
+  const totalRetweets = metrics.reduce((sum, m) => sum + (m.retweets_received || 0), 0);
+  const totalComments = metrics.reduce((sum, m) => sum + (m.replies_received || 0), 0);
+  const avgScore =
+    metrics.length > 0
+      ? metrics.reduce((sum, m) => sum + (m.engagement_score || 0), 0) / metrics.length
+      : 0;
+
+  // Group by action type
+  const actionGroups = metrics.reduce((acc, m) => {
+    const type = m.action_type;
+    if (!acc[type]) {
+      acc[type] = { count: 0, totalScore: 0 };
+    }
+    acc[type].count++;
+    acc[type].totalScore += m.engagement_score || 0;
+    return acc;
+  }, {} as Record<string, { count: number; totalScore: number }>);
+
+  const topPerformingActions = Object.entries(actionGroups)
+    .map(([actionType, stats]) => ({
+      actionType,
+      count: stats.count,
+      avgScore: stats.count > 0 ? stats.totalScore / stats.count : 0,
+    }))
+    .sort((a, b) => b.avgScore - a.avgScore);
+
+  return {
+    totalEngagements,
+    totalLikes,
+    totalRetweets,
+    totalComments,
+    averageEngagementScore: avgScore,
+    topPerformingActions,
+  };
+}
+
+/**
+ * Get engagement history for target accounts
+ */
+export interface EngagementHistory {
+  targetAccount: string;
+  totalEngagements: number;
+  retweetsCount: number;
+  likesCount: number;
+  commentsCount: number;
+  firstEngagedAt: Date | null;
+  lastEngagedAt: Date | null;
+  engagementsThisWeek: number;
+  engagementsThisMonth: number;
+  accountStatus: string;
+}
+
+export async function getEngagementHistory(
+  userId: string
+): Promise<EngagementHistory[]> {
+  const { data, error } = await db
+    .from('agent_engagement_history')
+    .select('*')
+    .eq('user_id', userId)
+    .order('last_engaged_at', { ascending: false });
+
+  if (error) {
+    console.error('Failed to fetch engagement history:', error);
+    return [];
+  }
+
+  return (data || []).map((h) => ({
+    targetAccount: h.target_account,
+    totalEngagements: h.total_engagements || 0,
+    retweetsCount: h.retweets_count || 0,
+    likesCount: h.likes_count || 0,
+    commentsCount: h.comments_count || 0,
+    firstEngagedAt: h.first_engaged_at ? new Date(h.first_engaged_at) : null,
+    lastEngagedAt: h.last_engaged_at ? new Date(h.last_engaged_at) : null,
+    engagementsThisWeek: h.engagements_this_week || 0,
+    engagementsThisMonth: h.engagements_this_month || 0,
+    accountStatus: h.account_status || 'unknown',
+  }));
 }
 

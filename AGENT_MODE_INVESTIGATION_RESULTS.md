@@ -116,7 +116,7 @@ LIMIT 20;
 
 ---
 
-## Why Tasks Show "Will be scheduled on next cron run"
+## Why Tasks Show "Upcoming scheduled action"
 
 This message appears for **predicted** agent actions that haven't been created in the database yet. They show:
 - Future times (In 2h 6m, In 2h 33m, etc.)

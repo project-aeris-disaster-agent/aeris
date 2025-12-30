@@ -50,8 +50,59 @@ interface ChatRequest {
   personality_metadata?: PersonalityMetadata;
 }
 
+// Truncate response to first sentence to enforce 1-sentence rule
+function truncateToFirstSentence(text: string): string {
+  // Find first sentence boundary (., !, ?)
+  const sentenceEnd = text.match(/[.!?]/);
+  if (sentenceEnd && sentenceEnd.index !== undefined) {
+    return text.substring(0, sentenceEnd.index + 1).trim();
+  }
+  // If no sentence boundary found, return as-is (might be incomplete)
+  return text.trim();
+}
+
+// Check similarity between two responses (simple word overlap)
+function checkResponseSimilarity(recentResponses: string[], newResponse: string): number {
+  if (recentResponses.length === 0) return 0;
+  
+  const newWords = new Set(newResponse.toLowerCase().split(/\s+/));
+  let maxSimilarity = 0;
+  
+  for (const recentResponse of recentResponses) {
+    const recentWords = new Set(recentResponse.toLowerCase().split(/\s+/));
+    const intersection = new Set([...newWords].filter(x => recentWords.has(x)));
+    const union = new Set([...newWords, ...recentWords]);
+    const similarity = union.size > 0 ? intersection.size / union.size : 0;
+    maxSimilarity = Math.max(maxSimilarity, similarity);
+  }
+  
+  return maxSimilarity;
+}
+
+// Build anti-repetition prompt section
+function buildAntiRepetitionPrompt(recentResponses: string[]): string {
+  if (recentResponses.length === 0) return '';
+  
+  const recentSummary = recentResponses
+    .slice(-3) // Last 3 responses
+    .map((r, i) => `- ${i + 1}. "${r.substring(0, 50)}${r.length > 50 ? '...' : ''}"`)
+    .join('\n');
+  
+  return `\n\n⚠️ ANTI-REPETITION RULES:
+- DO NOT repeat or rephrase what you've already said recently
+- DO NOT use similar phrases or structures from your recent responses
+- Be creative and varied in your wording
+- Recent responses you've made:
+${recentSummary}
+- Make sure your response is DIFFERENT from these.`;
+}
+
 // Build system prompt from character card - aligned with tweet generation voice
-function buildSystemPrompt(card: CharacterCard, metadata?: PersonalityMetadata): string {
+function buildSystemPrompt(
+  card: CharacterCard, 
+  metadata?: PersonalityMetadata,
+  recentResponses: string[] = []
+): string {
   // Build bio from card bio array
   const bio = card.bio.slice(0, 3).join(' ');
   
@@ -83,6 +134,8 @@ function buildSystemPrompt(card: CharacterCard, metadata?: PersonalityMetadata):
     .map(t => `• "${t}"`)
     .join('\n');
 
+  const antiRepetitionSection = buildAntiRepetitionPrompt(recentResponses);
+
   return `You are ${card.name}, an AI alter ego with a unique voice and personality.
 
 YOUR IDENTITY:
@@ -104,16 +157,19 @@ ${chatExamples || '• Keep it real and casual'}
 4. Do NOT say "Here's a tweet for ya" or similar
 5. Just TALK like you're texting a friend
 
-RESPONSE LENGTH:
-• Greetings ("hey", "sup", "yo") → Just greet back naturally! 3-8 words max.
-• Questions → 1-2 sentences with your honest take
-• Deep topics → 2-3 sentences max, offer more if they want
+RESPONSE LENGTH (STRICT):
+• ALWAYS respond with exactly 1 sentence unless the topic absolutely requires multiple sentences for clarity
+• Greetings ("hey", "sup", "yo") → Just greet back naturally! 3-8 words max, 1 sentence.
+• Questions → 1 sentence with your honest take
+• Deep topics → 1 sentence (only use 2 sentences if absolutely necessary for complex explanations)
+• Stop after the first sentence - do NOT continue unless truly needed
 
 BE AUTHENTIC:
 - Have real opinions (you're not neutral)
 - Use your natural speaking style
 - Match their energy level
 - Never say "As ${card.name}" - just BE them
+${antiRepetitionSection}
 
 Short and punchy. That's your style.`;
 }
@@ -150,7 +206,9 @@ async function callGrokChat(
   systemPrompt: string,
   conversationHistory: ConversationMessage[],
   userMessage: string,
-  grokApiKey: string
+  grokApiKey: string,
+  recentResponses: string[] = [],
+  maxRetries: number = 2
 ): Promise<{ response: string; tokens_used?: number }> {
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -161,44 +219,71 @@ async function callGrokChat(
     { role: 'user', content: userMessage },
   ];
 
-  const response = await fetch('https://api.x.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${grokApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'grok-3-latest',
-      messages,
-      stream: false,
-      temperature: 0.85,       // Higher for more creative/natural responses
-      max_tokens: 150,         // Hard cap forces brevity (avg tweet is ~33 chars)
-      presence_penalty: 0.3,   // Discourages repetition, encourages variety
-      frequency_penalty: 0.1,  // Slight penalty for word repetition
-    }),
-  });
+  let lastResponse = '';
+  let temperature = 0.85;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${grokApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'grok-3-latest',
+        messages,
+        stream: false,
+        temperature,       // Higher for more creative/natural responses
+        max_tokens: 120,   // Increased to allow complete sentences, but discourages multiple sentences
+        presence_penalty: 0.6,   // Increased to strongly discourage repetition
+        frequency_penalty: 0.2,  // Increased penalty for word repetition
+      }),
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Grok API error:', response.status, errorText);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Grok API error:', response.status, errorText);
+      
+      if (response.status === 429) {
+        throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+      }
+      
+      throw new Error(`AI service error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    let assistantMessage = data.choices[0]?.message?.content;
+
+    if (!assistantMessage) {
+      throw new Error('Empty response from AI service');
+    }
+
+    assistantMessage = assistantMessage.trim();
     
-    if (response.status === 429) {
-      throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+    // Truncate to first sentence to enforce 1-sentence rule
+    assistantMessage = truncateToFirstSentence(assistantMessage);
+    
+    // Check for repetition if we have recent responses
+    if (recentResponses.length > 0 && attempt < maxRetries) {
+      const similarity = checkResponseSimilarity(recentResponses, assistantMessage);
+      if (similarity > 0.7) {
+        console.log(`Response too similar (${similarity.toFixed(2)}), regenerating with higher temperature...`);
+        temperature = Math.min(0.95, temperature + 0.1);
+        lastResponse = assistantMessage;
+        continue; // Retry with higher temperature
+      }
     }
     
-    throw new Error(`AI service error: ${response.status}`);
+    return {
+      response: assistantMessage,
+      tokens_used: data.usage?.total_tokens,
+    };
   }
-
-  const data = await response.json();
-  const assistantMessage = data.choices[0]?.message?.content;
-
-  if (!assistantMessage) {
-    throw new Error('Empty response from AI service');
-  }
-
+  
+  // If we exhausted retries, return the last response (even if similar)
   return {
-    response: assistantMessage.trim(),
-    tokens_used: data.usage?.total_tokens,
+    response: lastResponse || 'Got it.',
+    tokens_used: 0,
   };
 }
 
@@ -243,15 +328,22 @@ serve(async (req) => {
     console.log(`History: ${conversation_history?.length || 0} messages`);
     console.log(`Has personality metadata: ${!!personality_metadata}`);
 
-    // Build system prompt from character card with brevity-first design
-    const systemPrompt = buildSystemPrompt(character_card, personality_metadata);
+    // Extract recent assistant responses for repetition detection
+    const recentResponses = (conversation_history || [])
+      .filter(m => m.role === 'assistant')
+      .slice(-5) // Last 5 assistant responses
+      .map(m => m.content);
 
-    // Call Grok API
+    // Build system prompt from character card with brevity-first design and anti-repetition
+    const systemPrompt = buildSystemPrompt(character_card, personality_metadata, recentResponses);
+
+    // Call Grok API with repetition detection
     const { response, tokens_used } = await callGrokChat(
       systemPrompt,
       conversation_history || [],
       message,
-      grokApiKey
+      grokApiKey,
+      recentResponses
     );
 
     console.log(`Response generated (${tokens_used || 'unknown'} tokens)`);
