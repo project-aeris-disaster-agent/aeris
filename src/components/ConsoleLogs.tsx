@@ -20,9 +20,8 @@ import {
   ExternalLink,
   History,
   XCircle,
-  Filter,
 } from 'lucide-react';
-import type { ScheduledPostsRow, ScheduledPostType } from '@/types/database';
+import type { ScheduledPostType } from '@/types/database';
 import { useScheduledTasks } from '@/hooks/useScheduledTasks';
 import { usePredictedActions } from '@/hooks/usePredictedActions';
 import { getSourceLabel, getTwitterLink, formatScheduledTime, formatTime } from '@/utils/taskUtils';

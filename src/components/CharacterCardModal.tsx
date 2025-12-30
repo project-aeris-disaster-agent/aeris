@@ -27,7 +27,7 @@ import {
   AtSign,
 } from 'lucide-react';
 import type { ElizaOSCharacterCard, ProfileScores, AgentSettings, AgentFrequency } from '@/types/database';
-import { getAgentSettings, updateAgentSettings, DEFAULT_AGENT_SETTINGS } from '@/services/agentService';
+import { getAgentSettings, updateAgentSettings, DEFAULT_AGENT_SETTINGS, getTargetAccountUsername } from '@/services/agentService';
 import {
   generateCharacterCard,
   saveCharacterCard,
@@ -1243,7 +1243,7 @@ export function CharacterCardModal({
                                     key={idx}
                                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs bg-green-500/20 border-green-500/30 text-green-300"
                                   >
-                                    @{account}
+                                    @{getTargetAccountUsername(account)}
                                     {state === 'editing' && (
                                       <button
                                         onClick={async () => {

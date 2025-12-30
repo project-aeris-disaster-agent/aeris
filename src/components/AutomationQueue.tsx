@@ -19,7 +19,7 @@ import {
   History,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import type { ScheduledPostsRow, ScheduledPostType } from '@/types/database';
+import type { ScheduledPostType } from '@/types/database';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAgentActivityStats } from '@/services/agentService';
 import { cleanupOverdueTasks } from '@/services/automationService';

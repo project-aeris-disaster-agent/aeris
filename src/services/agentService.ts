@@ -604,7 +604,7 @@ export async function getEngagementMetrics(
   }, {} as Record<string, { count: number; totalScore: number }>);
 
   const topPerformingActions = Object.entries(actionGroups)
-    .map(([actionType, stats]) => ({
+    .map(([actionType, stats]: [string, { count: number; totalScore: number }]) => ({
       actionType,
       count: stats.count,
       avgScore: stats.count > 0 ? stats.totalScore / stats.count : 0,
