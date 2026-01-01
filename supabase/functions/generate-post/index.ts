@@ -2,8 +2,25 @@
 // Uses character card and conversation history to generate authentic social media posts
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit, RATE_LIMITS, rateLimitResponse } from '../_shared/rateLimit.ts';
+import { validateEmojiResponse } from '../_shared/generateResponse.ts';
+
+const SUPABASE_URL =
+  Deno.env.get('PROJECT_URL') ??
+  Deno.env.get('SUPABASE_URL') ??
+  '';
+const SUPABASE_SERVICE_ROLE_KEY =
+  Deno.env.get('SERVICE_ROLE_KEY') ??
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ??
+  '';
+
+function createSupabaseAdmin(): SupabaseClient {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+  }
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -88,9 +105,58 @@ serve(async (req) => {
     console.log('Topics to focus on:', topicsToFocus);
     
     const topicsText = topicsToFocus.join(', ');
+    
+    // Fetch user preferences for emoji mode
+    let emojiMode = false;
+    try {
+      const supabaseAdmin = createSupabaseAdmin();
+      const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('preferences')
+        .eq('id', user_id)
+        .single();
+      
+      if (profile?.preferences?.emoji_mode === true) {
+        emojiMode = true;
+        console.log('🎭 Emoji mode enabled for post generation');
+      }
+    } catch (error) {
+      console.error('Error fetching user preferences:', error);
+      // Continue with emojiMode = false if fetch fails
+    }
 
     // Build system prompt - straightforward and clear
-    const systemPrompt = `You are ${character_card.name}, an AI alter ego with a unique voice and personality.
+    let systemPrompt = '';
+    
+    if (emojiMode) {
+      // Emoji mode prompt
+      systemPrompt = `You are ${character_card.name}, an AI alter ego with a unique voice and personality.
+
+YOUR IDENTITY:
+${bio}
+
+Expertise: ${character_card.knowledge.join(', ')}
+
+${custom_tags && custom_tags.length > 0 
+  ? `REQUIRED FOCUS TOPICS (the post MUST be about these):\n${custom_tags.map((tag, idx) => `- ${tag}`).join('\n')}`
+  : `Interests: ${topicsText}`}
+
+🎭 EMOJI MODE (CRITICAL):
+Your text/words responses are disabled. You can only speak in emojis.
+Similar to how Egyptians use hieroglyphics to communicate/write.
+
+STRICT RULES:
+- Respond with ONLY emojis (1-5 emojis maximum)
+- NO text, NO words, NO letters, NO numbers, NO punctuation
+- Express your personality and response through emoji selection
+- Choose emojis that represent your reaction/response to the topics
+- Minimum: 1 emoji, Maximum: 5 emojis
+- STRICTLY NO TEXT RESPONSES OR TWEETS/REPLIES
+
+Return ONLY the emojis, nothing else.`;
+    } else {
+      // Normal mode prompt
+      systemPrompt = `You are ${character_card.name}, an AI alter ego with a unique voice and personality.
 
 YOUR IDENTITY:
 ${bio}
@@ -152,6 +218,7 @@ Generate a social media post (50-280 characters) that:
 - **ABSOLUTELY NO URLs or web links** - this is critical
 
 Return ONLY the post text, nothing else.`;
+    }
 
     // Call Grok API (xAI) to generate the post
     const grokApiKey = Deno.env.get('GROK_API_KEY');
@@ -197,56 +264,73 @@ Return ONLY the post text, nothing else.`;
       throw new Error('Failed to generate post content');
     }
 
-    // CRITICAL: Strip any fabricated URLs from the generated content
-    // This catches cases where the AI ignores the prompt instructions
-    const urlPattern = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(com|net|org|io|co|xyz|gg|dev|app|link|me|info|biz|us|uk|tv|fm|ly|to|cc|sh|be|ai|vc|gl|ws|so|club|online|site|tech|space|world|zone|live|digital|network|page|pro|work)[^\s]*/gi;
-    const placeholderPattern = /\[link\]|\[url\]|yourlinkhere|yourlink|linkhere|checkitout\.com|example\.com|yoursite\.[a-z]+/gi;
-    
-    // Remove URLs and placeholder patterns
-    const originalPost = generatedPost;
-    generatedPost = generatedPost.replace(urlPattern, '').replace(placeholderPattern, '');
-    
-    // Clean up any double spaces or trailing/leading spaces left by URL removal
-    generatedPost = generatedPost.replace(/\s{2,}/g, ' ').trim();
-    
-    // Also remove orphaned punctuation before removed URLs (e.g., "Check it out: " becomes "Check it out")
-    generatedPost = generatedPost.replace(/:\s*$/, '').replace(/\s+([.!?])$/, '$1').trim();
-    
-    if (originalPost !== generatedPost) {
-      console.log(`⚠️ URL(s) stripped from generated post. Original: "${originalPost.substring(0, 100)}..."`);
+    // EMOJI MODE: Validate and enforce emoji-only response
+    if (emojiMode) {
+      const validation = validateEmojiResponse(generatedPost);
+      if (!validation.isValid) {
+        console.warn(`Emoji validation failed: ${validation.error}`);
+        // Fallback to neutral emoji if validation fails
+        generatedPost = '🤖';
+      } else {
+        generatedPost = validation.cleaned;
+      }
+    } else {
+      // Normal mode: CRITICAL: Strip any fabricated URLs from the generated content
+      // This catches cases where the AI ignores the prompt instructions
+      const urlPattern = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(com|net|org|io|co|xyz|gg|dev|app|link|me|info|biz|us|uk|tv|fm|ly|to|cc|sh|be|ai|vc|gl|ws|so|club|online|site|tech|space|world|zone|live|digital|network|page|pro|work)[^\s]*/gi;
+      const placeholderPattern = /\[link\]|\[url\]|yourlinkhere|yourlink|linkhere|checkitout\.com|example\.com|yoursite\.[a-z]+/gi;
+      
+      // Remove URLs and placeholder patterns
+      const originalPost = generatedPost;
+      generatedPost = generatedPost.replace(urlPattern, '').replace(placeholderPattern, '');
+      
+      // Clean up any double spaces or trailing/leading spaces left by URL removal
+      generatedPost = generatedPost.replace(/\s{2,}/g, ' ').trim();
+      
+      // Also remove orphaned punctuation before removed URLs (e.g., "Check it out: " becomes "Check it out")
+      generatedPost = generatedPost.replace(/:\s*$/, '').replace(/\s+([.!?])$/, '$1').trim();
+      
+      if (originalPost !== generatedPost) {
+        console.log(`⚠️ URL(s) stripped from generated post. Original: "${originalPost.substring(0, 100)}..."`);
+      }
     }
 
-    // Post-generation validation for mentions
-    // Extract mentions for logging/debugging
-    const mentionMatches = generatedPost.match(/@[\w]+/g) || [];
-    const mentionCount = mentionMatches.length;
-    
-    console.log(`Generated post length: ${generatedPost.length} characters`);
-    console.log(`Mentions found: ${mentionCount} - ${mentionMatches.join(', ') || 'NONE'}`);
-    console.log(`Generated post preview: ${generatedPost.substring(0, 100)}...`);
-    
-    // Check if mentions are missing (especially for sports/events topics)
-    const topicsLower = topicsToFocus.join(' ').toLowerCase();
-    const isSportsTopic = topicsLower.includes('f1') || topicsLower.includes('formula') || 
-                         topicsLower.includes('nba') || topicsLower.includes('football') ||
-                         topicsLower.includes('ferrari') || topicsLower.includes('racing');
-    
-    if (mentionCount === 0 && isSportsTopic) {
-      console.warn(`⚠️ WARNING: No @mentions found in generated post for sports topic. Topics: ${topicsText}`);
-      console.warn(`Post content: ${generatedPost}`);
-    }
-    
-    // Ensure post doesn't exceed Twitter's 280 character limit
-    if (generatedPost.length > 280) {
-      console.warn(`Post exceeds 280 characters (${generatedPost.length}), truncating...`);
-      generatedPost = generatedPost.substring(0, 277) + '...';
-    }
-    
-    // Validate mention format (basic check - mentions should be @username format)
-    // Grok should generate valid mentions, but this is a safety check
-    const invalidMentions = generatedPost.match(/@[^\w]/g);
-    if (invalidMentions && invalidMentions.length > 0) {
-      console.warn(`Warning: Potential invalid mention format detected: ${invalidMentions.join(', ')}`);
+    // Post-generation validation (skip for emoji mode)
+    if (!emojiMode) {
+      // Post-generation validation for mentions
+      // Extract mentions for logging/debugging
+      const mentionMatches = generatedPost.match(/@[\w]+/g) || [];
+      const mentionCount = mentionMatches.length;
+      
+      console.log(`Generated post length: ${generatedPost.length} characters`);
+      console.log(`Mentions found: ${mentionCount} - ${mentionMatches.join(', ') || 'NONE'}`);
+      console.log(`Generated post preview: ${generatedPost.substring(0, 100)}...`);
+      
+      // Check if mentions are missing (especially for sports/events topics)
+      const topicsLower = topicsToFocus.join(' ').toLowerCase();
+      const isSportsTopic = topicsLower.includes('f1') || topicsLower.includes('formula') || 
+                           topicsLower.includes('nba') || topicsLower.includes('football') ||
+                           topicsLower.includes('ferrari') || topicsLower.includes('racing');
+      
+      if (mentionCount === 0 && isSportsTopic) {
+        console.warn(`⚠️ WARNING: No @mentions found in generated post for sports topic. Topics: ${topicsText}`);
+        console.warn(`Post content: ${generatedPost}`);
+      }
+      
+      // Ensure post doesn't exceed Twitter's 280 character limit
+      if (generatedPost.length > 280) {
+        console.warn(`Post exceeds 280 characters (${generatedPost.length}), truncating...`);
+        generatedPost = generatedPost.substring(0, 277) + '...';
+      }
+      
+      // Validate mention format (basic check - mentions should be @username format)
+      // Grok should generate valid mentions, but this is a safety check
+      const invalidMentions = generatedPost.match(/@[^\w]/g);
+      if (invalidMentions && invalidMentions.length > 0) {
+        console.warn(`Warning: Potential invalid mention format detected: ${invalidMentions.join(', ')}`);
+      }
+    } else {
+      console.log(`Generated emoji post: ${generatedPost}`);
     }
 
     // Extract suggested topics - use custom tags if provided, otherwise use character card topics (only 1)

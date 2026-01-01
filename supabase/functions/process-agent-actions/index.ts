@@ -5,7 +5,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { generateResponse, type CharacterCard } from '../_shared/generateResponse.ts';
+import { generateResponse, type CharacterCard, type PersonalityMetadata } from '../_shared/generateResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -532,12 +532,46 @@ async function fetchThreadContext(
 }
 
 /**
- * Generate a reply tweet using shared response generation (now with same intelligence as chat)
+ * Fetch recent agent replies from DB for anti-repetition
+ */
+async function fetchRecentAgentReplies(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
+  limit: number = 10
+): Promise<string[]> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('scheduled_posts')
+      .select('content')
+      .eq('user_id', userId)
+      .eq('post_type', 'comment')
+      .eq('status', 'posted')
+      .order('posted_at', { ascending: false })
+      .limit(limit);
+    
+    if (error || !data) {
+      console.error('Error fetching recent replies:', error);
+      return [];
+    }
+    
+    return data.map((row: { content: string }) => row.content);
+  } catch (error) {
+    console.error('Error fetching recent replies:', error);
+    return [];
+  }
+}
+
+/**
+ * Generate a reply tweet using shared response generation (UNIFIED with chat brain)
+ * Now includes personalityMetadata for consistent personality across modes
  */
 async function generateMentionReply(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
   targetTweet: TwitterTweet,
   targetUsername: string,
   characterCard: CharacterCard,
+  personalityMetadata: PersonalityMetadata | undefined,
   accessToken?: string
 ): Promise<string | null> {
   if (!GROK_API_KEY) {
@@ -545,35 +579,57 @@ async function generateMentionReply(
     return null;
   }
 
-  // Fetch thread context if available
+  // Fetch user preferences for emoji mode
+  let emojiMode = false;
+  try {
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('preferences')
+      .eq('id', userId)
+      .single();
+    
+    if (profile?.preferences?.emoji_mode === true) {
+      emojiMode = true;
+      console.log('🎭 Emoji mode enabled for Twitter reply');
+    }
+  } catch (error) {
+    console.error('Error fetching user preferences:', error);
+    // Continue with emojiMode = false if fetch fails
+  }
+
+  // Fetch thread context if available (limit to save API calls on free tier)
   let threadContext = '';
   if (accessToken && targetTweet.in_reply_to_user_id) {
     const context = await fetchThreadContext(targetTweet.id, accessToken);
     if (context && context.threadTweets.length > 1) {
+      // Build context with tweet text only (limit to 3 for token efficiency)
       const threadTexts = context.threadTweets
-        .slice(0, 5)
-        .map((t) => `@${targetUsername}: ${t.text}`)
+        .slice(0, 3)
+        .map((t) => `"${t.text}"`)
         .join('\n\n');
-      threadContext = threadTexts;
+      threadContext = `Previous tweets in this conversation:\n${threadTexts}`;
     }
   }
 
-  // Get recent replies from scheduled_posts to avoid repetition
-  // Note: This would require a database query, but for now we'll rely on the shared function's
-  // anti-repetition logic which works on the conversation history passed to it
-  const recentResponses: string[] = []; // Could be enhanced to fetch from DB
+  // Fetch recent replies from DB for anti-repetition (limit for efficiency)
+  const recentResponses = await fetchRecentAgentReplies(supabaseAdmin, userId, 5);
+  console.log(`Fetched ${recentResponses.length} recent replies for anti-repetition`);
 
   try {
-    // Use shared response generation with Twitter mode
+    // Use shared response generation with Twitter mode (SAME brain as chat)
     const result = await generateResponse({
       characterCard,
       userMessage: targetTweet.text,
+      personalityMetadata, // NOW PASSED: Same personality enhancement as chat
       context: threadContext,
       recentResponses,
-      maxLength: 280, // Twitter character limit
+      minLength: 120, // Twitter minimum character limit
+      maxLength: 180, // Twitter maximum character limit
       enforceOneSentence: false, // Twitter replies can be longer if needed
       mode: 'twitter',
       grokApiKey: GROK_API_KEY,
+      targetUsername, // Pass actual username for proper mentions
+      emojiMode,
     });
 
     if (!result) {
@@ -893,13 +949,24 @@ async function processUserAgentActions(
       user.twitter_refresh_token
     );
 
-    // Get character card from pre-fetched data (optimized query)
+    // Get character card and personality metadata from pre-fetched data (optimized query)
     let characterCard: CharacterCard | null = null;
+    let personalityMetadata: PersonalityMetadata | undefined = undefined;
     if (settings.actions.mention) {
       // Character cards are already fetched in the main query
       const cardData = (user as any).character_cards?.find((card: any) => card.is_active);
       if (cardData?.card_data) {
         characterCard = cardData.card_data as typeof characterCard;
+        // Extract personality metadata for UNIFIED brain (same as chat)
+        const metadata = cardData.generation_metadata;
+        if (metadata) {
+          personalityMetadata = {
+            signaturePhrases: metadata.signaturePhrases || metadata.analysis_summary?.signature_phrases || [],
+            emojiPatterns: metadata.emojiPatterns || metadata.analysis_summary?.emoji_patterns || [],
+            humorStyle: metadata.humorStyle || metadata.analysis_summary?.humor_style || '',
+            vocabularyLevel: metadata.vocabularyLevel || metadata.analysis_summary?.vocabulary_level || '',
+          };
+        }
       }
     }
 
@@ -1082,11 +1149,14 @@ async function processUserAgentActions(
               continue;
             }
 
-            // Generate reply content with thread context using shared response generation
+            // Generate reply content using UNIFIED brain (same as chat)
             const replyContent = await generateMentionReply(
+              supabaseAdmin,
+              user.id,
               tweet,
               targetUsername,
               characterCard as CharacterCard,
+              personalityMetadata,
               accessToken
             );
 

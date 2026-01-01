@@ -4,7 +4,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { generateResponse, type CharacterCard } from '../_shared/generateResponse.ts';
+import { generateResponse, type CharacterCard, type PersonalityMetadata } from '../_shared/generateResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -169,27 +169,85 @@ async function fetchTargetAccountTweets(
 }
 
 /**
- * Generate a reply using shared response generation (now with same intelligence as chat)
+ * Fetch recent agent replies from DB for anti-repetition
+ */
+async function fetchRecentAgentReplies(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
+  limit: number = 10
+): Promise<string[]> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('scheduled_posts')
+      .select('content')
+      .eq('user_id', userId)
+      .eq('post_type', 'comment')
+      .eq('status', 'posted')
+      .order('posted_at', { ascending: false })
+      .limit(limit);
+    
+    if (error || !data) {
+      return [];
+    }
+    
+    return data.map((row: { content: string }) => row.content);
+  } catch (error) {
+    console.error('Error fetching recent replies:', error);
+    return [];
+  }
+}
+
+/**
+ * Generate a reply using shared response generation (UNIFIED with chat brain)
+ * Now includes personalityMetadata for consistent personality across modes
  */
 async function generateMentionReply(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
   targetTweet: TwitterTweet,
   targetUsername: string,
-  characterCard: CharacterCard
+  characterCard: CharacterCard,
+  personalityMetadata?: PersonalityMetadata
 ): Promise<string | null> {
   if (!GROK_API_KEY) {
     return null;
   }
 
+  // Fetch user preferences for emoji mode
+  let emojiMode = false;
   try {
-    // Use shared response generation with Twitter mode
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('preferences')
+      .eq('id', userId)
+      .single();
+    
+    if (profile?.preferences?.emoji_mode === true) {
+      emojiMode = true;
+      console.log('🎭 Emoji mode enabled for Twitter reply');
+    }
+  } catch (error) {
+    console.error('Error fetching user preferences:', error);
+    // Continue with emojiMode = false if fetch fails
+  }
+
+  // Fetch recent replies from DB for anti-repetition (limit for efficiency)
+  const recentResponses = await fetchRecentAgentReplies(supabaseAdmin, userId, 5);
+
+  try {
+    // Use shared response generation with Twitter mode (SAME brain as chat)
     const result = await generateResponse({
       characterCard,
       userMessage: targetTweet.text,
-      recentResponses: [], // Could be enhanced to fetch from DB
-      maxLength: 280, // Twitter character limit
+      personalityMetadata, // NOW PASSED: Same personality enhancement as chat
+      recentResponses,
+      minLength: 120, // Twitter minimum character limit
+      maxLength: 180, // Twitter maximum character limit
       enforceOneSentence: false, // Twitter replies can be longer if needed
       mode: 'twitter',
       grokApiKey: GROK_API_KEY,
+      targetUsername, // Pass actual username for proper mentions
+      emojiMode,
     });
 
     if (!result) {
@@ -435,18 +493,29 @@ async function executeInstantAgentActions(
     profile.twitter_refresh_token
   );
 
-  // Get character card for mention generation
-    let characterCard: CharacterCard | null = null;
+  // Get character card and personality metadata for UNIFIED brain
+  let characterCard: CharacterCard | null = null;
+  let personalityMetadata: PersonalityMetadata | undefined = undefined;
   if (agentSettings.actions.mention) {
     const { data: cardData } = await supabaseAdmin
       .from('character_cards')
-      .select('card_data')
+      .select('card_data, generation_metadata')
       .eq('user_id', userId)
       .eq('is_active', true)
       .single();
 
     if (cardData?.card_data) {
       characterCard = cardData.card_data as typeof characterCard;
+      // Extract personality metadata for UNIFIED brain (same as chat)
+      const metadata = cardData.generation_metadata as Record<string, any> | null;
+      if (metadata) {
+        personalityMetadata = {
+          signaturePhrases: metadata.signaturePhrases || metadata.analysis_summary?.signature_phrases || [],
+          emojiPatterns: metadata.emojiPatterns || metadata.analysis_summary?.emoji_patterns || [],
+          humorStyle: metadata.humorStyle || metadata.analysis_summary?.humor_style || '',
+          vocabularyLevel: metadata.vocabularyLevel || metadata.analysis_summary?.vocabulary_level || '',
+        };
+      }
     }
   }
 
@@ -498,12 +567,15 @@ async function executeInstantAgentActions(
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    // Execute mention/reply
+    // Execute mention/reply using UNIFIED brain (same as chat)
     if (agentSettings.actions.mention && characterCard) {
       const replyContent = await generateMentionReply(
+        supabaseAdmin,
+        userId,
         tweet,
         targetUsername,
-        characterCard as CharacterCard
+        characterCard as CharacterCard,
+        personalityMetadata
       );
 
       if (replyContent) {

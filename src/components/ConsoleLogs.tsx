@@ -20,12 +20,16 @@ import {
   ExternalLink,
   History,
   XCircle,
+  Settings,
+  Smile,
 } from 'lucide-react';
 import type { ScheduledPostType } from '@/types/database';
 import { useScheduledTasks } from '@/hooks/useScheduledTasks';
 import { usePredictedActions } from '@/hooks/usePredictedActions';
 import { getSourceLabel, getTwitterLink, formatScheduledTime, formatTime } from '@/utils/taskUtils';
 import { checkTwitterConnectivity, checkLLMConnectivity, checkAgentStatus } from '@/services/connectivityService';
+import { getEmojiMode, setEmojiMode } from '@/services/preferencesService';
+import { useNotifications } from '@/contexts/NotificationContext';
 
 interface ConsoleLogsProps {
   isOpen: boolean;
@@ -65,7 +69,8 @@ const ACTION_CONFIG: Record<ScheduledPostType, { icon: typeof Send; color: strin
 };
 
 export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: ConsoleLogsProps) {
-  const [activeTab, setActiveTab] = useState<'tasks' | 'history' | 'status' | 'report'>('tasks');
+  const { showSuccess, showError } = useNotifications();
+  const [activeTab, setActiveTab] = useState<'tasks' | 'history' | 'status' | 'report' | 'settings'>('tasks');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
   const [connectivityStatus, setConnectivityStatus] = useState<ConnectivityStatus>({
@@ -74,6 +79,8 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
     llm: { status: 'checking', lastChecked: null },
   });
   const [reportText, setReportText] = useState('');
+  const [emojiMode, setEmojiModeState] = useState(false);
+  const [isLoadingEmojiMode, setIsLoadingEmojiMode] = useState(false);
 
   // Use shared hooks for task data
   const { pending: ongoingTasks, completed: completedTasks, refresh: refreshTasks } = useScheduledTasks({
@@ -93,6 +100,36 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
   // Handle cancel predicted action
   const handleCancelPredicted = (predictedId: string) => {
     dismissAction(predictedId);
+  };
+
+  // Load emoji mode preference on mount
+  useEffect(() => {
+    if (isOpen && userId) {
+      loadEmojiMode();
+    }
+  }, [isOpen, userId]);
+
+  const loadEmojiMode = async () => {
+    try {
+      const enabled = await getEmojiMode(userId);
+      setEmojiModeState(enabled);
+    } catch (error) {
+      console.error('Error loading emoji mode:', error);
+    }
+  };
+
+  const handleToggleEmojiMode = async (enabled: boolean) => {
+    setIsLoadingEmojiMode(true);
+    try {
+      await setEmojiMode(userId, enabled);
+      setEmojiModeState(enabled);
+      showSuccess(`Emoji mode ${enabled ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      console.error('Error toggling emoji mode:', error);
+      showError('Failed to update emoji mode setting');
+    } finally {
+      setIsLoadingEmojiMode(false);
+    }
   };
 
   // Check connectivity status
@@ -220,6 +257,7 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                 { id: 'history' as const, label: 'History', icon: History, count: completedTasks.length, failedCount: failedTasksCount },
                 { id: 'status' as const, label: 'Status', icon: Activity },
                 { id: 'report' as const, label: 'Report', icon: Send },
+                { id: 'settings' as const, label: 'Settings', icon: Settings },
               ].map((tab) => {
                 const Icon = tab.icon;
                 return (
@@ -629,6 +667,61 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                     {connectivityStatus.llm.error && (
                       <p className="text-red-400 text-xs mt-2">{connectivityStatus.llm.error}</p>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Settings Tab */}
+              {activeTab === 'settings' && (
+                <div className="max-w-2xl mx-auto">
+                  <div className="mb-6">
+                    <h3 className="text-white font-semibold mb-2">Settings</h3>
+                    <p className="text-white/50 text-sm">
+                      Configure your agent preferences and behavior settings.
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {/* Emoji Mode Toggle */}
+                    <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-start gap-3 flex-1">
+                          <div className="p-2 bg-gradient-to-br from-yellow-500/20 to-orange-500/20 rounded-lg border border-yellow-500/30 mt-0.5">
+                            <Smile className="w-5 h-5 text-yellow-400" />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <h4 className="text-white font-medium">Emoji Mode</h4>
+                            </div>
+                            <p className="text-white/50 text-xs mb-2">
+                              Agent responds only in emojis (1-5 emojis max, no text). Applies to chat messages, Twitter replies, and scheduled posts.
+                            </p>
+                            <p className="text-white/40 text-xs">
+                              Similar to how Egyptians use hieroglyphics to communicate - pure visual language.
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleToggleEmojiMode(!emojiMode)}
+                          disabled={isLoadingEmojiMode}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-yellow-500/50 focus:ring-offset-2 focus:ring-offset-black ml-4 ${
+                            emojiMode ? 'bg-yellow-500' : 'bg-white/10'
+                          } ${isLoadingEmojiMode ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              emojiMode ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      {isLoadingEmojiMode && (
+                        <div className="flex items-center gap-2 mt-3 text-white/50 text-xs">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>Saving...</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
