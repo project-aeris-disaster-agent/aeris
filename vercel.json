@@ -13,11 +13,11 @@
   "crons": [
     {
       "path": "/api/cron/process-agent",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 9 * * *"
     },
     {
       "path": "/api/cron/process-posts",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 10 * * *"
     }
   ]
 }
