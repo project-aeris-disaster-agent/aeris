@@ -81,6 +81,9 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
       // This runs once on component mount to clear orphaned tasks
       cleanupOverdueTasks(userId)
         .then((result) => {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/components/AutomationQueue.tsx:useEffect',message:'Cleanup overdue tasks completed',data:{userId,cancelledCount:result.cancelledCount,error:result.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+          // #endregion
           if (result.cancelledCount > 0) {
             console.log(`🧹 Auto-cleaned ${result.cancelledCount} overdue tasks`);
           }
@@ -92,6 +95,9 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
       // Load agent stats
       getAgentActivityStats(userId)
         .then((stats) => {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/components/AutomationQueue.tsx:useEffect',message:'Agent activity stats loaded',data:{userId,pendingActions:stats.pendingActions,lastRunAt:stats.lastRunAt?.toISOString(),scheduledToday:stats.scheduledToday,executedToday:stats.executedToday,failedToday:stats.failedToday,nextScheduledAction:stats.nextScheduledAction?.toISOString()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+          // #endregion
           setAgentStats({
             pendingActions: stats.pendingActions,
             lastRunAt: stats.lastRunAt,

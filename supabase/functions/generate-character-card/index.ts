@@ -55,6 +55,7 @@ interface DeepPersonalityAnalysis {
   coreTraits: Array<{ trait: string; evidence: string }>;
   emotionalPatterns: string[];
   humorStyle: string;
+  opinionStyle: 'strong' | 'balanced' | 'provocative' | 'diplomatic';
   
   // Content & Interests
   primaryTopics: string[];
@@ -455,6 +456,7 @@ Respond with this exact JSON structure:
   ],
   "emotionalPatterns": ["observed emotional expressions"],
   "humorStyle": "description of humor style or 'minimal/none'",
+  "opinionStyle": "strong|balanced|provocative|diplomatic (how they express opinions)",
   
   "primaryTopics": ["topics they tweet about frequently"],
   "expertiseAreas": ["areas where they show knowledge"],
@@ -623,6 +625,7 @@ Respond with this JSON (every field MUST reference actual content above):
   ],
   "emotionalPatterns": ["how they express emotions"],
   "humorStyle": "their humor approach",
+  "opinionStyle": "strong|balanced|provocative|diplomatic",
   
   "primaryTopics": ["what they actually tweet about"],
   "expertiseAreas": ["what they know well"],
@@ -1312,11 +1315,13 @@ Always respond with valid JSON only. Be specific and evidence-based.`;
           emojiPatterns: analysis.emojiPatterns,
           humorStyle: analysis.humorStyle,
           vocabularyLevel: analysis.vocabularyLevel,
+          opinionStyle: analysis.opinionStyle || 'balanced',
           analysis_summary: {
             primary_topics: analysis.primaryTopics,
             core_traits: analysis.coreTraits.map(t => t.trait),
             vocabulary_level: analysis.vocabularyLevel,
             humor_style: analysis.humorStyle,
+            opinion_style: analysis.opinionStyle || 'balanced',
           }
         }
       }),

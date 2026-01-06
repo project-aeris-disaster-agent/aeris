@@ -35,6 +35,15 @@ export interface PersonalityMetadata {
   emojiPatterns?: string[];
   humorStyle?: string;
   vocabularyLevel?: string;
+  opinionStyle?: 'strong' | 'balanced' | 'provocative' | 'diplomatic';
+}
+
+// Conversation context for mood and topic awareness
+export interface ConversationContext {
+  topics: string[];
+  userMood: 'positive' | 'neutral' | 'frustrated' | 'curious' | 'excited';
+  ongoingThreads: string[];
+  lastMentioned: Record<string, string>;
 }
 
 // ============================================================================
@@ -127,6 +136,47 @@ export async function getSessionMessages(
   }));
 }
 
+/**
+ * Analyze conversation history to build persistent context
+ */
+export function buildConversationContext(
+  messages: ChatMessage[]
+): ConversationContext {
+  // Extract topics from recent messages
+  const recentTexts = messages.slice(-10).map(m => m.content.toLowerCase());
+  const allText = recentTexts.join(' ');
+  
+  // Simple topic extraction (could be enhanced with NLP)
+  const topicIndicators = {
+    work: ['job', 'work', 'career', 'boss', 'coworker', 'office', 'meeting'],
+    tech: ['code', 'programming', 'api', 'app', 'software', 'ai', 'tech'],
+    personal: ['feel', 'thinking', 'worried', 'excited', 'stressed'],
+    social: ['friend', 'family', 'relationship', 'people', 'social'],
+  };
+  
+  const detectedTopics: string[] = [];
+  for (const [topic, keywords] of Object.entries(topicIndicators)) {
+    if (keywords.some(kw => allText.includes(kw))) {
+      detectedTopics.push(topic);
+    }
+  }
+  
+  // Simple mood detection from last user message
+  const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || '';
+  let mood: ConversationContext['userMood'] = 'neutral';
+  if (/\?{2,}|!{2,}|help|confused|don't understand/.test(lastUserMsg)) mood = 'frustrated';
+  else if (/excited|amazing|love|awesome|great/.test(lastUserMsg.toLowerCase())) mood = 'excited';
+  else if (/\?/.test(lastUserMsg)) mood = 'curious';
+  else if (/thanks|appreciate|happy|good/.test(lastUserMsg.toLowerCase())) mood = 'positive';
+
+  return {
+    topics: detectedTopics,
+    userMood: mood,
+    ongoingThreads: detectedTopics.slice(0, 2),
+    lastMentioned: {}
+  };
+}
+
 // ============================================================================
 // MESSAGE HANDLING
 // ============================================================================
@@ -188,11 +238,18 @@ export async function sendMessage(
     // 1. Get recent conversation history BEFORE saving user message (to avoid including current message)
     const recentMessages = await getSessionMessages(sessionId, MAX_HISTORY_MESSAGES);
 
-    // 2. Save user message
+    // 2. Build conversation context for mood and topic awareness
+    const conversationContext = buildConversationContext(recentMessages);
+
+    // 3. Save user message
     await saveMessage(userId, sessionId, 'user', userMessage);
 
-    // 3. Call Edge Function for AI response
+    // 4. Call Edge Function for AI response
     const edgeFunctionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-with-clone`;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/chatService.ts:sendMessage',message:'Calling chat-with-clone edge function',data:{userId,sessionId,messageLength:userMessage.length,historyLength:recentMessages.length,hasPersonalityMetadata:!!personalityMetadata,edgeFunctionUrl},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     
     const response = await fetch(edgeFunctionUrl, {
       method: 'POST',
@@ -212,10 +269,16 @@ export async function sendMessage(
         })),
         // Pass personality metadata for enhanced response generation
         personality_metadata: personalityMetadata,
+        // Pass conversation context for mood/topic awareness
+        conversation_context: conversationContext,
       }),
     });
 
     const data = await response.json();
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/chatService.ts:sendMessage',message:'Edge function response received',data:{status:response.status,ok:response.ok,hasError:!!data.error,errorMessage:data.error,hasResponse:!!data.response,responseLength:data.response?.length,tokensUsed:data.tokens_used},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
 
     if (!response.ok) {
       throw new Error(data.error || 'Failed to get AI response');

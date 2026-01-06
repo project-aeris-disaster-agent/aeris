@@ -7,6 +7,35 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as SupabaseClient<any>;
 
+// Advanced settings that fine-tune how the personality is expressed
+// These complement (not override) the character card
+export interface AdvancedSettings {
+  // Response behavior
+  responseLengthPreference: 'terse' | 'brief' | 'normal' | 'detailed';
+  allowTangents: 'never' | 'rarely' | 'sometimes';
+  enableLiveSearch: boolean;
+  
+  // Expression intensity (0-100, scales character card traits)
+  emojiIntensity: number;      // How often emojis appear (uses character's emoji patterns)
+  signaturePhraseFrequency: number;  // How often catchphrases appear
+  humorIntensity: number;      // How much humor shows through
+  opinionStrength: 'soft' | 'normal' | 'strong';
+  
+  // Creativity
+  creativityLevel: 'consistent' | 'balanced' | 'creative';
+}
+
+export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
+  responseLengthPreference: 'brief',
+  allowTangents: 'rarely',
+  enableLiveSearch: true,
+  emojiIntensity: 50,
+  signaturePhraseFrequency: 30,
+  humorIntensity: 50,
+  opinionStrength: 'normal',
+  creativityLevel: 'balanced',
+};
+
 /**
  * Get user preferences
  */
@@ -65,4 +94,27 @@ export async function getEmojiMode(userId: string): Promise<boolean> {
  */
 export async function setEmojiMode(userId: string, enabled: boolean): Promise<void> {
   await updateUserPreferences(userId, { emoji_mode: enabled });
+}
+
+/**
+ * Get advanced settings for a user
+ */
+export async function getAdvancedSettings(userId: string): Promise<AdvancedSettings> {
+  const preferences = await getUserPreferences(userId);
+  return {
+    ...DEFAULT_ADVANCED_SETTINGS,
+    ...preferences.advanced_settings,
+  };
+}
+
+/**
+ * Update advanced settings for a user
+ */
+export async function updateAdvancedSettings(
+  userId: string,
+  settings: Partial<AdvancedSettings>
+): Promise<void> {
+  const currentSettings = await getAdvancedSettings(userId);
+  const updatedSettings = { ...currentSettings, ...settings };
+  await updateUserPreferences(userId, { advanced_settings: updatedSettings });
 }

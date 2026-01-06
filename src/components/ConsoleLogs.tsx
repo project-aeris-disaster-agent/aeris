@@ -22,13 +22,24 @@ import {
   XCircle,
   Settings,
   Smile,
+  Sliders,
+  MessageCircle,
+  Sparkles,
+  Zap,
 } from 'lucide-react';
 import type { ScheduledPostType } from '@/types/database';
 import { useScheduledTasks } from '@/hooks/useScheduledTasks';
 import { usePredictedActions } from '@/hooks/usePredictedActions';
 import { getSourceLabel, getTwitterLink, formatScheduledTime, formatTime } from '@/utils/taskUtils';
 import { checkTwitterConnectivity, checkLLMConnectivity, checkAgentStatus } from '@/services/connectivityService';
-import { getEmojiMode, setEmojiMode } from '@/services/preferencesService';
+import { 
+  getEmojiMode, 
+  setEmojiMode,
+  getAdvancedSettings,
+  updateAdvancedSettings,
+  DEFAULT_ADVANCED_SETTINGS,
+  type AdvancedSettings,
+} from '@/services/preferencesService';
 import { useNotifications } from '@/contexts/NotificationContext';
 
 interface ConsoleLogsProps {
@@ -81,6 +92,8 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
   const [reportText, setReportText] = useState('');
   const [emojiMode, setEmojiModeState] = useState(false);
   const [isLoadingEmojiMode, setIsLoadingEmojiMode] = useState(false);
+  const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(DEFAULT_ADVANCED_SETTINGS);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(false);
 
   // Use shared hooks for task data
   const { pending: ongoingTasks, completed: completedTasks, refresh: refreshTasks } = useScheduledTasks({
@@ -106,6 +119,7 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
   useEffect(() => {
     if (isOpen && userId) {
       loadEmojiMode();
+      loadAdvancedSettings();
     }
   }, [isOpen, userId]);
 
@@ -115,6 +129,15 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
       setEmojiModeState(enabled);
     } catch (error) {
       console.error('Error loading emoji mode:', error);
+    }
+  };
+
+  const loadAdvancedSettings = async () => {
+    try {
+      const settings = await getAdvancedSettings(userId);
+      setAdvancedSettings(settings);
+    } catch (error) {
+      console.error('Error loading advanced settings:', error);
     }
   };
 
@@ -129,6 +152,22 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
       showError('Failed to update emoji mode setting');
     } finally {
       setIsLoadingEmojiMode(false);
+    }
+  };
+
+  const handleUpdateAdvancedSetting = async <K extends keyof AdvancedSettings>(
+    key: K,
+    value: AdvancedSettings[K]
+  ) => {
+    setIsLoadingSettings(true);
+    try {
+      await updateAdvancedSettings(userId, { [key]: value });
+      setAdvancedSettings(prev => ({ ...prev, [key]: value }));
+    } catch (error) {
+      console.error('Error updating setting:', error);
+      showError('Failed to update setting');
+    } finally {
+      setIsLoadingSettings(false);
     }
   };
 
@@ -677,11 +716,11 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                   <div className="mb-6">
                     <h3 className="text-white font-semibold mb-2">Settings</h3>
                     <p className="text-white/50 text-sm">
-                      Configure your agent preferences and behavior settings.
+                      Fine-tune how your agent expresses its personality.
                     </p>
                   </div>
                   
-                  <div className="space-y-4">
+                  <div className="space-y-6">
                     {/* Emoji Mode Toggle */}
                     <div className="p-4 rounded-xl bg-white/5 border border-white/10">
                       <div className="flex items-center justify-between">
@@ -690,38 +729,266 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                             <Smile className="w-5 h-5 text-yellow-400" />
                           </div>
                           <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <h4 className="text-white font-medium">Emoji Mode</h4>
-                            </div>
-                            <p className="text-white/50 text-xs mb-2">
-                              Agent responds only in emojis (1-5 emojis max, no text). Applies to chat messages, Twitter replies, and scheduled posts.
-                            </p>
-                            <p className="text-white/40 text-xs">
-                              Similar to how Egyptians use hieroglyphics to communicate - pure visual language.
+                            <h4 className="text-white font-medium">Emoji Mode</h4>
+                            <p className="text-white/50 text-xs">
+                              Respond only in emojis (1-5 emojis max).
                             </p>
                           </div>
                         </div>
                         <button
                           onClick={() => handleToggleEmojiMode(!emojiMode)}
                           disabled={isLoadingEmojiMode}
-                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-yellow-500/50 focus:ring-offset-2 focus:ring-offset-black ml-4 ${
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                             emojiMode ? 'bg-yellow-500' : 'bg-white/10'
                           } ${isLoadingEmojiMode ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                         >
                           <span
-                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
                               emojiMode ? 'translate-x-6' : 'translate-x-1'
                             }`}
                           />
                         </button>
                       </div>
-                      {isLoadingEmojiMode && (
-                        <div className="flex items-center gap-2 mt-3 text-white/50 text-xs">
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          <span>Saving...</span>
-                        </div>
-                      )}
                     </div>
+
+                    {/* Response Behavior Section */}
+                    <div className="space-y-3">
+                      <h4 className="text-white/70 text-sm font-medium flex items-center gap-2">
+                        <MessageCircle className="w-4 h-4" />
+                        Response Behavior
+                      </h4>
+                      
+                      {/* Response Length */}
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <h5 className="text-white text-sm font-medium">Response Length</h5>
+                            <p className="text-white/40 text-xs">How verbose the responses are</p>
+                          </div>
+                          <span className="text-cyan-400 text-xs font-medium capitalize">
+                            {advancedSettings.responseLengthPreference}
+                          </span>
+                        </div>
+                        <div className="flex gap-1">
+                          {(['terse', 'brief', 'normal', 'detailed'] as const).map(opt => (
+                            <button
+                              key={opt}
+                              onClick={() => handleUpdateAdvancedSetting('responseLengthPreference', opt)}
+                              disabled={isLoadingSettings}
+                              className={`flex-1 px-2 py-1.5 rounded text-xs transition-colors ${
+                                advancedSettings.responseLengthPreference === opt
+                                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                  : 'bg-white/5 text-white/50 hover:bg-white/10 border border-transparent'
+                              }`}
+                            >
+                              {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Tangents */}
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <h5 className="text-white text-sm font-medium">Allow Tangents</h5>
+                            <p className="text-white/40 text-xs">Brief off-topic asides that tie back</p>
+                          </div>
+                          <span className="text-purple-400 text-xs font-medium capitalize">
+                            {advancedSettings.allowTangents}
+                          </span>
+                        </div>
+                        <div className="flex gap-1">
+                          {(['never', 'rarely', 'sometimes'] as const).map(opt => (
+                            <button
+                              key={opt}
+                              onClick={() => handleUpdateAdvancedSetting('allowTangents', opt)}
+                              disabled={isLoadingSettings}
+                              className={`flex-1 px-2 py-1.5 rounded text-xs transition-colors ${
+                                advancedSettings.allowTangents === opt
+                                  ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                                  : 'bg-white/5 text-white/50 hover:bg-white/10 border border-transparent'
+                              }`}
+                            >
+                              {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Live Search Toggle */}
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-start gap-3">
+                            <Zap className="w-4 h-4 text-green-400 mt-0.5" />
+                            <div>
+                              <h5 className="text-white text-sm font-medium">Live Search</h5>
+                              <p className="text-white/40 text-xs">Auto-fetch current info for trending topics</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleUpdateAdvancedSetting('enableLiveSearch', !advancedSettings.enableLiveSearch)}
+                            disabled={isLoadingSettings}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                              advancedSettings.enableLiveSearch ? 'bg-green-500' : 'bg-white/10'
+                            }`}
+                          >
+                            <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                              advancedSettings.enableLiveSearch ? 'translate-x-6' : 'translate-x-1'
+                            }`} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Expression Intensity Section */}
+                    <div className="space-y-3">
+                      <h4 className="text-white/70 text-sm font-medium flex items-center gap-2">
+                        <Sliders className="w-4 h-4" />
+                        Expression Intensity
+                      </h4>
+                      <p className="text-white/30 text-xs -mt-1">
+                        These tune how much of your character's traits come through.
+                      </p>
+
+                      {/* Emoji Intensity Slider */}
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between mb-2">
+                          <h5 className="text-white text-sm font-medium">Emoji Usage</h5>
+                          <span className="text-yellow-400 text-xs font-medium">{advancedSettings.emojiIntensity}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          step="10"
+                          value={advancedSettings.emojiIntensity}
+                          onChange={(e) => handleUpdateAdvancedSetting('emojiIntensity', parseInt(e.target.value))}
+                          disabled={isLoadingSettings}
+                          className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                        />
+                        <div className="flex justify-between text-white/30 text-xs mt-1">
+                          <span>None</span>
+                          <span>Heavy</span>
+                        </div>
+                      </div>
+
+                      {/* Signature Phrases Slider */}
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between mb-2">
+                          <h5 className="text-white text-sm font-medium">Signature Phrases</h5>
+                          <span className="text-pink-400 text-xs font-medium">{advancedSettings.signaturePhraseFrequency}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          step="10"
+                          value={advancedSettings.signaturePhraseFrequency}
+                          onChange={(e) => handleUpdateAdvancedSetting('signaturePhraseFrequency', parseInt(e.target.value))}
+                          disabled={isLoadingSettings}
+                          className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                        />
+                        <div className="flex justify-between text-white/30 text-xs mt-1">
+                          <span>Rare</span>
+                          <span>Frequent</span>
+                        </div>
+                      </div>
+
+                      {/* Humor Slider */}
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between mb-2">
+                          <h5 className="text-white text-sm font-medium">Humor Level</h5>
+                          <span className="text-orange-400 text-xs font-medium">{advancedSettings.humorIntensity}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          step="10"
+                          value={advancedSettings.humorIntensity}
+                          onChange={(e) => handleUpdateAdvancedSetting('humorIntensity', parseInt(e.target.value))}
+                          disabled={isLoadingSettings}
+                          className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                        />
+                        <div className="flex justify-between text-white/30 text-xs mt-1">
+                          <span>Serious</span>
+                          <span>Playful</span>
+                        </div>
+                      </div>
+
+                      {/* Opinion Strength */}
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <h5 className="text-white text-sm font-medium">Opinion Strength</h5>
+                            <p className="text-white/40 text-xs">How boldly opinions are expressed</p>
+                          </div>
+                          <span className="text-red-400 text-xs font-medium capitalize">
+                            {advancedSettings.opinionStrength}
+                          </span>
+                        </div>
+                        <div className="flex gap-1">
+                          {(['soft', 'normal', 'strong'] as const).map(opt => (
+                            <button
+                              key={opt}
+                              onClick={() => handleUpdateAdvancedSetting('opinionStrength', opt)}
+                              disabled={isLoadingSettings}
+                              className={`flex-1 px-2 py-1.5 rounded text-xs transition-colors ${
+                                advancedSettings.opinionStrength === opt
+                                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                  : 'bg-white/5 text-white/50 hover:bg-white/10 border border-transparent'
+                              }`}
+                            >
+                              {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Creativity Section */}
+                    <div className="space-y-3">
+                      <h4 className="text-white/70 text-sm font-medium flex items-center gap-2">
+                        <Sparkles className="w-4 h-4" />
+                        Creativity
+                      </h4>
+
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <h5 className="text-white text-sm font-medium">Creativity Level</h5>
+                            <p className="text-white/40 text-xs">Response unpredictability</p>
+                          </div>
+                          <span className="text-blue-400 text-xs font-medium capitalize">
+                            {advancedSettings.creativityLevel}
+                          </span>
+                        </div>
+                        <div className="flex gap-1">
+                          {(['consistent', 'balanced', 'creative'] as const).map(opt => (
+                            <button
+                              key={opt}
+                              onClick={() => handleUpdateAdvancedSetting('creativityLevel', opt)}
+                              disabled={isLoadingSettings}
+                              className={`flex-1 px-2 py-1.5 rounded text-xs transition-colors ${
+                                advancedSettings.creativityLevel === opt
+                                  ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                  : 'bg-white/5 text-white/50 hover:bg-white/10 border border-transparent'
+                              }`}
+                            >
+                              {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {isLoadingSettings && (
+                      <div className="flex items-center justify-center gap-2 text-white/50 text-xs py-2">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>Saving...</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

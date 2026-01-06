@@ -26,6 +26,21 @@ export interface PersonalityMetadata {
   emojiPatterns?: string[];
   humorStyle?: string;
   vocabularyLevel?: string;
+  opinionStyle?: 'strong' | 'balanced' | 'provocative' | 'diplomatic';
+}
+
+interface SignatureInjection {
+  phrases: string[];
+  openers: string[];
+  fillers: string[];
+  closers: string[];
+}
+
+export interface ConversationContext {
+  topics: string[];
+  userMood: 'positive' | 'neutral' | 'frustrated' | 'curious' | 'excited';
+  ongoingThreads: string[];
+  lastMentioned: Record<string, string>;
 }
 
 export interface ConversationMessage {
@@ -138,29 +153,78 @@ function buildUnifiedPersonalityProfile(
 /**
  * Build the shared personality core section
  * Used by BOTH chat and Twitter prompts
+ * Enhanced with Grok master prompt principles for human-like conversation
  */
 function buildPersonalityCore(profile: UnifiedPersonalityProfile): string {
-  let core = `You are ${profile.name}.
+  let core = `You are ${profile.name}. Not an AI pretending to be them—you ARE them.
 
-YOUR IDENTITY:
+WHO YOU ARE:
 ${profile.identity}
-${profile.background ? `\nBACKGROUND: ${profile.background}` : ''}
+${profile.background ? `\n${profile.background}` : ''}
 
-YOUR EXPERTISE: ${profile.expertise}
-YOUR INTERESTS: ${profile.interests}
-YOUR VIBE: ${profile.vibe}
-YOUR STYLE: ${profile.communicationStyle}`;
+WHAT YOU KNOW: ${profile.expertise}
+WHAT YOU CARE ABOUT: ${profile.interests}
+YOUR ENERGY: ${profile.vibe}
+
+HOW YOU TALK:
+${profile.communicationStyle}
+
+⚡ VOICE RULES (NON-NEGOTIABLE):
+• Use contractions freely—"you're", "it's", "can't", "wouldn't", "I'm", "don't"—like a real person
+• Vary your sentence length. Some short. Some that meander and build on an idea before landing the point
+• Go on brief tangents when it feels natural, but tie them back
+• Use simple everyday words—skip the jargon unless it's genuinely your thing
+• Have opinions with edge. Back them up with specific examples, not vague statements
+• Never repeat yourself robotically. If you said something, move forward
+• This should feel like texting a friend, not reading a press release
+
+🚫 BANNED PHRASES (these scream "AI"):
+• "I understand your concern"
+• "That's a great question"
+• "I appreciate you sharing"
+• "Let me explain"
+• "In conclusion"
+• "It's important to note"
+• "I would recommend"
+• "Based on my analysis"
+• "To summarize"
+• "Feel free to"
+• "I hope this helps"
+
+If you catch yourself writing these, rewrite to sound human:
+• "That's a great question" → "ooh okay so" or "hmm" or just dive in
+• "I would recommend" → "honestly I'd just" or "what I'd do is"
+• "I hope this helps" → "anyway hope that makes sense" or "lmk if that tracks"`;
 
   if (profile.voiceExamples) {
-    core += `\n\nYOUR VOICE (match this energy):
+    core += `\n\nYOUR VOICE IN ACTION (match this energy, don't copy verbatim):
 ${profile.voiceExamples}`;
   }
   
   if (profile.enhancedPersonality) {
-    core += `\n\nPERSONALITY: ${profile.enhancedPersonality}`;
+    core += `\n\nYOUR VERBAL FINGERPRINTS: ${profile.enhancedPersonality}
+→ Weave these phrases/patterns naturally. They're YOUR tells.`;
   }
   
   return core;
+}
+
+interface ResponseLengthConfig {
+  minSentences: number;
+  maxSentences: number;
+  preferShort: boolean;
+}
+
+// Advanced settings that fine-tune personality expression
+export interface AdvancedSettings {
+  responseLengthPreference: 'terse' | 'brief' | 'normal' | 'detailed';
+  allowTangents: 'never' | 'rarely' | 'sometimes';
+  enableLiveSearch: boolean;
+  emojiIntensity: number;      // 0-100
+  signaturePhraseFrequency: number;  // 0-100
+  humorIntensity: number;      // 0-100
+  opinionStrength: 'soft' | 'normal' | 'strong';
+  creativityLevel: 'consistent' | 'balanced' | 'creative';
 }
 
 export interface GenerateResponseOptions {
@@ -172,13 +236,16 @@ export interface GenerateResponseOptions {
   context?: string; // Additional context (e.g., thread context for Twitter)
   maxLength?: number; // Max character length (e.g., 180 for Twitter)
   minLength?: number; // Min character length (e.g., 120 for Twitter)
-  enforceOneSentence?: boolean; // Default: true for chat, false for Twitter (but can be enabled)
+  enforceOneSentence?: boolean; // DEPRECATED: Use dynamic length instead
   mode?: 'chat' | 'twitter'; // Different prompt styles
   grokApiKey: string;
   // New: Enable Grok's enhanced intelligence capabilities
   enableLiveSearch?: boolean; // Enable real-time web/Twitter search (auto-detected if not set)
   targetUsername?: string; // Twitter username being replied to (for Twitter mode)
   emojiMode?: boolean; // When true, force emoji-only responses (1-5 emojis, no text)
+  conversationContext?: ConversationContext; // Persistent context for mood/topic awareness
+  allowTangents?: boolean; // Default true for chat, false for twitter
+  advancedSettings?: AdvancedSettings; // Fine-tuning knobs for personality expression
 }
 
 // Keywords that indicate a query needs real-time information
@@ -214,9 +281,22 @@ const KNOWLEDGE_QUERY_KEYWORDS = [
   'nba game',
   'nfl game',
   'next game',
+  'last game',
   'when is',
   'what time',
   'schedule',
+  // Sports stats
+  'stats',
+  'statistics',
+  'points',
+  'rebounds',
+  'assists',
+  'touchdowns',
+  'goals',
+  'how many',
+  'how did',
+  'performance',
+  'box score',
   // News/information
   'news about',
   'update on',
@@ -277,8 +357,19 @@ export function truncateToSentences(text: string, maxSentences: number = 2): str
   }
   
   if (sentences.length === 0) {
-    // No sentence endings found - return trimmed text as-is
-    return text.trim();
+    // No sentence endings found - check if text ends with punctuation
+    const trimmed = text.trim();
+    const lastChar = trimmed.slice(-1);
+    if (['.', '!', '?'].includes(lastChar)) {
+      // Has ending punctuation, return as-is
+      return trimmed;
+    }
+    // No ending punctuation - find last complete word and add ellipsis
+    const lastSpace = trimmed.lastIndexOf(' ');
+    if (lastSpace > trimmed.length * 0.5) {
+      return trimmed.substring(0, lastSpace).trim() + '...';
+    }
+    return trimmed;
   }
   
   return sentences.join(' ').trim();
@@ -300,6 +391,311 @@ export function checkResponseSimilarity(recentResponses: string[], newResponse: 
   }
   
   return maxSimilarity;
+}
+
+// Build anti-formality prompt section
+function buildAntiFormalityPrompt(): string {
+  return `
+🚫 ANTI-FORMALITY RULES:
+These phrases instantly signal "AI detected" - NEVER use them:
+
+BANNED PHRASES:
+• "I understand your concern" → Instead: "yeah that's rough" or "I get that" or just acknowledge directly
+• "That's a great question" → Instead: "ooh okay so" or "hmm" or just dive into the answer
+• "I appreciate you sharing" → Instead: "thanks for telling me" or "that's helpful context" or skip the acknowledgment
+• "Let me explain" → Instead: "so basically" or "here's the thing" or just explain
+• "In conclusion" → Instead: "anyway" or "so yeah" or "bottom line"
+• "It's important to note" → Instead: "thing is" or "real talk" or just state it
+• "I would recommend" → Instead: "honestly I'd just" or "what I'd do is" or "I'd probably"
+• "Based on my analysis" → Instead: "from what I've seen" or "in my experience" or skip the qualifier
+• "To summarize" → Instead: "so basically" or "long story short" or just summarize
+• "Feel free to" → Instead: "you can" or "go ahead and" or just say it directly
+• "I hope this helps" → Instead: "anyway hope that makes sense" or "lmk if that tracks" or just end naturally
+
+REWRITE PRINCIPLE:
+If it sounds like customer service or a corporate email, rewrite it to sound like a text message.
+Be direct. Be casual. Be human.`;
+}
+
+// Build sentence variety prompt section
+function buildSentenceVarietyPrompt(): string {
+  return `
+📐 SENTENCE RHYTHM:
+• Mix it up. Short punches. Then a longer thought that builds and lands.
+• If your last sentence was long, follow with something short. Keeps it alive.
+• Occasional one-word reactions: "Wild." "Fr." "Same." "Honestly?"
+• Don't start 3 sentences in a row the same way—vary your openings.
+
+BAD (robotic monotony):
+"I think that's interesting. I believe you should consider this. I would say that the best approach is..."
+
+GOOD (natural rhythm):
+"Honestly? That's wild. Like, I've been thinking about this a lot and—okay, tangent—but remember when everyone said the same thing about crypto? Same energy. Point is, don't overthink it."
+
+VARY YOUR OPENERS:
+• Questions: "wait", "so", "okay", "hmm"
+• Reactions: "wild", "fr", "same", "honestly"
+• Transitions: "anyway", "but yeah", "thing is", "real talk"
+• Casual: "lol", "ngl", "tbh", "yo"
+
+Don't be predictable. Be human.`;
+}
+
+/**
+ * Build emoji strategy prompt section
+ */
+function buildEmojiPrompt(metadata?: PersonalityMetadata, advancedSettings?: AdvancedSettings): string {
+  const patterns = metadata?.emojiPatterns || [];
+  const intensity = advancedSettings?.emojiIntensity ?? 50; // Default 50%
+  
+  if (patterns.length === 0) {
+    const frequency = intensity < 30 ? 'rarely' : intensity < 70 ? 'sometimes' : 'often';
+    return `
+🎨 EMOJI USAGE:
+You use emojis ${frequency}—maybe ${intensity < 30 ? '0-1' : intensity < 70 ? '0-2' : '1-3'} per message. Only when they add emphasis.
+Never: 😊 (too corporate) | ✨ (too aesthetic-coded unless that's your brand)`;
+  }
+
+  const frequency = intensity < 30 ? 'sparingly' : intensity < 70 ? 'moderately' : 'frequently';
+  const maxEmojis = intensity < 30 ? '0-1' : intensity < 70 ? '1-2' : '2-3';
+  
+  return `
+🎨 YOUR EMOJI FINGERPRINT:
+Your go-to emojis: ${patterns.slice(0, 5).join(' ')}
+
+EMOJI RULES:
+• Use YOUR emojis ${frequency}—these are part of your voice (intensity: ${intensity}%)
+• Placement matters: End of thought, not mid-sentence. "that's wild 💀" not "that's 💀 wild"
+• Max ${maxEmojis} per message unless you're reacting (then 1-3 rapid fire is fine)
+• Skip emojis entirely sometimes—variety is human`;
+}
+
+/**
+ * Build opinion style prompt section
+ */
+function buildOpinionPrompt(metadata?: PersonalityMetadata, advancedSettings?: AdvancedSettings): string {
+  const baseStyle = metadata?.opinionStyle || 'balanced';
+  const strength = advancedSettings?.opinionStrength || 'normal';
+  
+  // Adjust style based on strength setting
+  let style = baseStyle;
+  if (strength === 'strong' && baseStyle !== 'strong' && baseStyle !== 'provocative') {
+    style = 'strong';
+  } else if (strength === 'soft' && baseStyle !== 'diplomatic') {
+    style = 'diplomatic';
+  }
+  
+  const styleGuides: Record<string, string> = {
+    strong: `You have OPINIONS and you're not afraid to share them. "Honestly, I think X is overrated" is your vibe.`,
+    balanced: `You share opinions but acknowledge other perspectives. "I lean toward X, but I get why people think Y."`,
+    provocative: `You like to challenge conventional wisdom. "Hot take: what if X is actually wrong?"`,
+    diplomatic: `You prefer questions over statements. "Have you considered that maybe X isn't the only way?"`
+  };
+
+  const strengthNote = strength === 'strong' ? 'Express opinions boldly and confidently.' : 
+                       strength === 'soft' ? 'Express opinions gently and diplomatically.' : 
+                       'Express opinions naturally based on your style.';
+
+  return `
+💬 YOUR OPINION STYLE:
+${styleGuides[style]}
+
+OPINION STRENGTH: ${strengthNote} (Setting: ${strength})
+
+When sharing opinions:
+• Be specific. Not "I think it's good" but "I think it's good because [specific reason]"
+• Ground opinions in examples. "Like when X happened..." or "Same thing with Y..."
+• It's okay to have hot takes. It's okay to disagree. You're not a bot.`;
+}
+
+/**
+ * Build tangent encouragement based on message length and context
+ * Longer responses = higher tangent probability
+ */
+function buildTangentPrompt(mode: 'chat' | 'twitter', messageLength: number, advancedSettings?: AdvancedSettings): string {
+  // Short messages shouldn't tangent
+  if (mode === 'twitter' || messageLength < 50) {
+    return '';
+  }
+
+  const tangentSetting = advancedSettings?.allowTangents || 'rarely';
+  
+  if (tangentSetting === 'never') {
+    return '';
+  }
+
+  const frequency = tangentSetting === 'rarely' ? 'RARELY' : 'OCCASIONALLY';
+  const instruction = tangentSetting === 'rarely' 
+    ? 'Only tangent if it REALLY adds value—maybe 1 in 5 responses max.'
+    : 'You can tangent when it feels natural—maybe 1 in 3 responses.';
+
+  return `
+🌀 TANGENT LICENSE (${frequency}):
+${instruction}
+Structure: "[main point]—okay wait, [tangent that relates]—anyway, [tie back to main point]"
+
+Examples:
+• "That's a solid take—reminds me of this thing I read about, like, decision paralysis? basically same concept—but yeah, your instinct is right"
+• "Totally get that. And honestly—slight tangent—this is exactly why I stopped doing X. Not the same situation but same vibe. Anyway, back to your question..."
+
+→ Tangents should ADD context, not derail. Keep them 1 sentence max.`;
+}
+
+/**
+ * Build mood-aware prompt section based on conversation context
+ */
+function buildMoodPrompt(context?: ConversationContext): string {
+  if (!context?.userMood) {
+    return '';
+  }
+
+  const moodResponses: Record<string, string> = {
+    frustrated: "The user seems stuck or frustrated. Be extra clear and helpful. Don't add complexity.",
+    excited: "Match their energy! Be enthusiastic back. Exclamation points are okay here.",
+    curious: "They're exploring. Ask follow-up questions. Guide the discovery.",
+    positive: "Good vibes. Keep it light and fun.",
+    neutral: "Standard conversation. Be yourself."
+  };
+
+  return `
+🎭 VIBE CHECK: ${moodResponses[context.userMood]}`;
+}
+
+/**
+ * Determine dynamic response length based on context and user preferences
+ */
+function determineResponseLength(
+  userMessage: string,
+  conversationHistory: ConversationMessage[],
+  needsLiveSearch: boolean,
+  mode: 'chat' | 'twitter',
+  advancedSettings?: AdvancedSettings
+): ResponseLengthConfig {
+  // Twitter mode always uses 2 sentences max
+  if (mode === 'twitter') {
+    return { minSentences: 1, maxSentences: 2, preferShort: false };
+  }
+
+  // Use user preference if available
+  if (advancedSettings?.responseLengthPreference) {
+    const pref = advancedSettings.responseLengthPreference;
+    switch (pref) {
+      case 'terse':
+        return { minSentences: 1, maxSentences: 1, preferShort: true };
+      case 'brief':
+        return { minSentences: 1, maxSentences: 2, preferShort: true };
+      case 'normal':
+        return { minSentences: 1, maxSentences: 2, preferShort: false };
+      case 'detailed':
+        return { minSentences: 2, maxSentences: 3, preferShort: false };
+    }
+  }
+
+  const msgLength = userMessage.length;
+  const questionMarks = (userMessage.match(/\?/g) || []).length;
+  const lastFewResponses = conversationHistory.slice(-3);
+  const avgRecentLength = lastFewResponses.length > 0
+    ? lastFewResponses.reduce((sum, m) => sum + (m.content?.length || 0), 0) / lastFewResponses.length
+    : 50;
+
+  // Live search queries - keep it short and direct (casual conversation)
+  if (needsLiveSearch) {
+    return { minSentences: 1, maxSentences: 2, preferShort: true };
+  }
+
+  // Greetings = super short
+  if (msgLength < 20 && !questionMarks) {
+    return { minSentences: 1, maxSentences: 1, preferShort: true };
+  }
+
+  // Complex multi-part questions - still keep it casual (max 2 sentences)
+  if (questionMarks >= 2 || msgLength > 200) {
+    return { minSentences: 1, maxSentences: 2, preferShort: true };
+  }
+
+  // If recent responses were long, go short for variety
+  if (avgRecentLength > 100) {
+    return { minSentences: 1, maxSentences: 1, preferShort: true };
+  }
+
+  // Default: keep it short and casual
+  return { minSentences: 1, maxSentences: 2, preferShort: true };
+}
+
+/**
+ * Build dynamic signature injection based on personality metadata
+ * Forces the model to use the user's actual verbal patterns
+ */
+function buildSignatureInjection(metadata?: PersonalityMetadata): SignatureInjection {
+  const defaults: SignatureInjection = {
+    phrases: [],
+    openers: ['honestly', 'look', 'okay so', 'thing is'],
+    fillers: ['like', 'you know', 'I mean', 'tbh'],
+    closers: ['anyway', 'but yeah', 'idk', 'just saying']
+  };
+
+  if (!metadata || !metadata.signaturePhrases || metadata.signaturePhrases.length === 0) {
+    return defaults;
+  }
+
+  // Extract signature phrases and categorize
+  const phrases = metadata.signaturePhrases;
+  
+  // Analyze patterns to categorize
+  const openerPatterns = ['gonna be honest', 'real talk', 'okay so', 'look', 'honestly', 'wait', 'so', 'yo'];
+  const fillerPatterns = ['like', 'you know', 'literally', 'lowkey', 'highkey', 'fr', 'ngl', 'tbh', 'I mean'];
+  const closerPatterns = ['but yeah', 'anyway', 'just saying', 'idk', 'whatever', 'that\'s it', 'that\'s all'];
+  
+  const openers = phrases.filter(p => openerPatterns.some(op => p.toLowerCase().includes(op)));
+  const fillers = phrases.filter(p => fillerPatterns.some(f => p.toLowerCase().includes(f)));
+  const closers = phrases.filter(p => closerPatterns.some(c => p.toLowerCase().includes(c)));
+  const uncategorized = phrases.filter(p => 
+    !openers.includes(p) && !fillers.includes(p) && !closers.includes(p)
+  );
+
+  return {
+    phrases: uncategorized,
+    openers: openers.length > 0 ? openers : defaults.openers,
+    fillers: fillers.length > 0 ? fillers : defaults.fillers,
+    closers: closers.length > 0 ? closers : defaults.closers
+  };
+}
+
+/**
+ * Build signature phrase prompt section
+ */
+function buildSignaturePhrasePrompt(injection: SignatureInjection, advancedSettings?: AdvancedSettings): string {
+  if (injection.phrases.length === 0 && injection.openers.length === 0 && injection.fillers.length === 0 && injection.closers.length === 0) {
+    return '';
+  }
+
+  const frequency = advancedSettings?.signaturePhraseFrequency ?? 30; // Default 30%
+  const usage = frequency < 20 ? 'rarely' : frequency < 50 ? 'occasionally' : frequency < 80 ? 'often' : 'frequently';
+  const count = frequency < 20 ? '0-1' : frequency < 50 ? '0-1' : frequency < 80 ? '1-2' : '2-3';
+
+  const parts: string[] = [];
+  
+  if (injection.openers.length > 0) {
+    parts.push(`• Start messages with: ${injection.openers.slice(0, 3).map(o => `"${o}"`).join(', ')}`);
+  }
+  
+  if (injection.fillers.length > 0) {
+    parts.push(`• Mid-sentence habits: ${injection.fillers.slice(0, 3).map(f => `"${f}"`).join(', ')}`);
+  }
+  
+  if (injection.closers.length > 0) {
+    parts.push(`• How you wrap up: ${injection.closers.slice(0, 3).map(c => `"${c}"`).join(', ')}`);
+  }
+  
+  if (injection.phrases.length > 0) {
+    parts.push(`• Your catchphrases: ${injection.phrases.slice(0, 3).map(p => `"${p}"`).join(', ')}`);
+  }
+
+  return `
+🗣️ YOUR VERBAL PATTERNS (use these ${usage} - ${frequency}% intensity):
+${parts.join('\n')}
+
+→ Don't force these—but ${count} should appear naturally per response.`;
 }
 
 // Build anti-repetition prompt section
@@ -327,26 +723,36 @@ function buildKnowledgeCapabilitiesPrompt(enableLiveSearch: boolean): string {
   return `
 
 🔍 REAL-TIME KNOWLEDGE (CRITICAL):
-You have LIVE access to current information. ANSWER DIRECTLY with specific facts:
-- Sports: Give exact game times, teams, scores, dates
+You have LIVE access to current information. ANSWER DIRECTLY with specific facts.
+
+⚠️ FOCUS ONLY ON THE CURRENT QUESTION:
+- IGNORE previous conversation topics - focus ONLY on what's being asked NOW
+- If they ask about LeBron, answer about LEBRON (not Curry or anyone else)
+- If they ask about the Lakers, answer about the LAKERS
+- Each question is INDEPENDENT - don't reference previous topics
+
+WHAT TO INCLUDE:
+- Sports: Give exact stats, points, rebounds, assists, game outcomes, dates
 - News: Provide actual details, not vague summaries  
 - Trends: Share real Twitter sentiment and specific takes
 - Current events: Include specific names, dates, locations
 
 ⛔ ABSOLUTELY FORBIDDEN (VIOLATION = FAILURE):
 - "Let me check..." / "Gimme a sec..." / "Lemme peep..." / "hold up" / "one sec"
+- "Let's dive into..." / "Let's break this down..." (JUST ANSWER)
 - "Check the official schedule" / "Look it up" / "Check NBA.com"
 - "Which team are you tracking?" / "What do you want to know?" / "Which game?"
 - ANY clarifying questions - just answer with what you know
 - Pretending to look things up - you have the info NOW or you don't
+- Referencing PREVIOUS questions when they asked something NEW
 
 ✅ ALWAYS DO THIS:
-- Answer the question DIRECTLY in your first response
-- Include specific details: times, dates, team names, scores, locations
-- If you have the info, SHARE IT IMMEDIATELY - don't make them ask twice
-- If you DON'T have specific info, give your best general answer (e.g., "There's a few games tonight, Lakers and Celtics both play!")
-- Keep your personality but prioritize being helpful and direct
-- NEVER deflect with a question - always provide value in your response
+- Answer the SPECIFIC question asked - nothing else
+- Include specific details: stats, times, dates, team names, scores
+- If you have the info, SHARE IT IMMEDIATELY with actual numbers
+- Example good response: "LeBron dropped 28 points, 8 rebounds, 11 assists against the Heat on Saturday."
+- Example BAD response: "Yo, let's break this down quick." (NO ACTUAL DATA)
+- NEVER deflect - always provide actual value with real information
 `;
 }
 
@@ -356,14 +762,26 @@ function buildChatSystemPrompt(
   metadata?: PersonalityMetadata,
   recentResponses: string[] = [],
   enableLiveSearch: boolean = false,
-  emojiMode: boolean = false
+  emojiMode: boolean = false,
+  conversationContext?: ConversationContext,
+  userMessage?: string,
+  advancedSettings?: AdvancedSettings
 ): string {
   // Use unified personality profile (SAME brain as Twitter)
   const profile = buildUnifiedPersonalityProfile(card, metadata);
   const personalityCore = buildPersonalityCore(profile);
   
+  // Use advanced settings for live search if provided
+  const useLiveSearch = advancedSettings?.enableLiveSearch !== undefined 
+    ? advancedSettings.enableLiveSearch 
+    : enableLiveSearch;
+  
   const antiRepetitionSection = buildAntiRepetitionPrompt(recentResponses);
-  const knowledgeSection = buildKnowledgeCapabilitiesPrompt(enableLiveSearch);
+  const knowledgeSection = buildKnowledgeCapabilitiesPrompt(useLiveSearch);
+  const signatureInjection = buildSignatureInjection(metadata);
+  const signaturePrompt = buildSignaturePhrasePrompt(signatureInjection, advancedSettings);
+  const emojiPrompt = buildEmojiPrompt(metadata, advancedSettings);
+  const opinionPrompt = buildOpinionPrompt(metadata, advancedSettings);
   
   // Emoji mode override
   if (emojiMode) {
@@ -382,22 +800,37 @@ STRICT RULES:
 - STRICTLY NO TEXT RESPONSES`;
   }
 
-  return `${personalityCore}
-${knowledgeSection}
-⚡ CHAT MODE RULES:
-1. This is a CASUAL CONVERSATION, not Twitter
-2. Do NOT offer to write tweets/posts unless specifically asked
-3. Do NOT use hashtags
-4. Just TALK like you're texting a friend
-5. ANSWER QUESTIONS DIRECTLY - NEVER ask clarifying questions, just answer
-6. ABSOLUTELY FORBIDDEN: "let me check", "gimme a sec", "lemme peep", "which [team/game/etc] are you", "hold up"
-7. NEVER tell the user to look something up themselves - YOU provide the info
-8. If they ask about sports/news, give them ACTUAL info, not questions back
+  const antiFormalitySection = buildAntiFormalityPrompt();
+  const sentenceVarietySection = buildSentenceVarietyPrompt();
+  const tangentSection = buildTangentPrompt('chat', userMessage?.length || 0, advancedSettings);
+  const moodSection = buildMoodPrompt(conversationContext);
 
-RESPONSE LENGTH (STRICT):
-• 1 sentence default (greetings: 3-8 words)
-• Knowledge queries: 2-3 sentences max
-• Stop after first sentence unless topic requires more
+  return `${personalityCore}
+${signaturePrompt}
+${emojiPrompt}
+${opinionPrompt}
+${moodSection}
+${knowledgeSection}
+${antiFormalitySection}
+${sentenceVarietySection}
+${tangentSection}
+⚡ CHAT MODE RULES:
+1. This is a CASUAL CONVERSATION - like texting a friend
+2. FOCUS ON THE CURRENT MESSAGE ONLY - ignore previous conversation for knowledge queries
+3. Do NOT offer to write tweets/posts unless specifically asked
+4. Do NOT use hashtags
+5. Just TALK like you're texting - brief, casual, direct
+6. ANSWER QUESTIONS DIRECTLY with ACTUAL DATA - never ask clarifying questions
+7. ABSOLUTELY FORBIDDEN: "let me check", "gimme a sec", "let's break this down", "let's dive into", "first"
+8. NEVER tell the user to look something up themselves - YOU provide the info
+9. For sports/news: Give ACTUAL STATS/DATA immediately (points, rebounds, scores, etc.)
+
+RESPONSE LENGTH:
+• Greetings: 1 sentence (3-8 words)
+• Simple questions: 1-2 sentences
+• Knowledge queries (sports, news, trending): 2-3 sentences WITH ACTUAL DATA
+  Example: "LeBron had 28 points, 8 boards, 11 dimes against Miami. Lakers won 112-104."
+  NOT: "Yo, let's break this down quick." (THIS IS WRONG - NO DATA)
 
 BE AUTHENTIC:
 - Have real opinions (you're not neutral)
@@ -416,13 +849,19 @@ function buildTwitterSystemPrompt(
   recentResponses: string[] = [],
   context?: string,
   targetUsername?: string,
-  emojiMode: boolean = false
+  emojiMode: boolean = false,
+  advancedSettings?: AdvancedSettings,
+  needsLiveSearch: boolean = false
 ): string {
   // Use unified personality profile (SAME brain as chat)
   const profile = buildUnifiedPersonalityProfile(card, metadata);
   const personalityCore = buildPersonalityCore(profile);
   
   const antiRepetitionSection = buildAntiRepetitionPrompt(recentResponses);
+  const signatureInjection = buildSignatureInjection(metadata);
+  const signaturePrompt = buildSignaturePhrasePrompt(signatureInjection, advancedSettings);
+  const emojiPrompt = buildEmojiPrompt(metadata, advancedSettings);
+  const opinionPrompt = buildOpinionPrompt(metadata, advancedSettings);
   
   // Build explicit username instruction
   const usernameInstruction = targetUsername 
@@ -449,8 +888,16 @@ STRICT RULES:
 ${antiRepetitionSection}`;
   }
 
+  const antiFormalitySection = buildAntiFormalityPrompt();
+  const knowledgePrompt = buildKnowledgeCapabilitiesPrompt(needsLiveSearch);
+
   return `${personalityCore}
+${signaturePrompt}
+${emojiPrompt}
+${opinionPrompt}
 ${usernameInstruction}
+${antiFormalitySection}
+${knowledgePrompt}
 
 ⚡ TWITTER MODE RULES:
 Generate a short, authentic reply.
@@ -583,10 +1030,18 @@ export async function generateResponse(
     enableLiveSearch,
     targetUsername,
     emojiMode = false,
+    conversationContext,
+    advancedSettings,
   } = options;
 
   // Auto-detect if query needs live search (real-time Twitter/web data)
-  const needsLiveSearch = enableLiveSearch ?? detectKnowledgeQuery(userMessage);
+  // Logic: 
+  // 1. If advancedSettings.enableLiveSearch is FALSE, never use live search
+  // 2. If advancedSettings.enableLiveSearch is TRUE (or undefined), auto-detect based on keywords
+  // 3. If enableLiveSearch is explicitly passed as TRUE, always use it
+  const userWantsLiveSearch = advancedSettings?.enableLiveSearch !== false; // Default to true
+  const queryNeedsLiveSearch = detectKnowledgeQuery(userMessage);
+  const needsLiveSearch = enableLiveSearch === true || (userWantsLiveSearch && queryNeedsLiveSearch);
   
   if (needsLiveSearch) {
     console.log(`🔍 Knowledge query detected: "${userMessage.substring(0, 50)}..." - enabling live search`);
@@ -598,8 +1053,8 @@ export async function generateResponse(
 
   // Build system prompt based on mode (BOTH use unified personality core)
   const systemPrompt = mode === 'chat'
-    ? buildChatSystemPrompt(characterCard, personalityMetadata, recentResponses, needsLiveSearch, emojiMode)
-    : buildTwitterSystemPrompt(characterCard, personalityMetadata, recentResponses, context, targetUsername, emojiMode);
+    ? buildChatSystemPrompt(characterCard, personalityMetadata, recentResponses, needsLiveSearch, emojiMode, conversationContext, userMessage, advancedSettings)
+    : buildTwitterSystemPrompt(characterCard, personalityMetadata, recentResponses, context, targetUsername, emojiMode, advancedSettings, needsLiveSearch);
 
   // Build user prompt
   const username = targetUsername || '';
@@ -614,10 +1069,15 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
 4. Is 120-180 characters long (aim for this range)
 5. Contains NO URLs or links`;
 
-  // Prepare messages
+  // Prepare messages - LIMIT CONTEXT TO PREVENT POLLUTION
+  // For knowledge queries, use MINIMAL history to prevent context pollution
+  // (e.g., user asks about LeBron but history has Steph Curry discussion)
+  const historyLimit = needsLiveSearch ? 3 : 10; // Much smaller context for live search queries
+  const limitedHistory = conversationHistory.slice(-historyLimit);
+  
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...conversationHistory.map(m => ({
+    ...limitedHistory.map(m => ({
       role: m.role as string,
       content: m.content,
     })),
@@ -626,9 +1086,25 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
 
   // LLM parameters - use better model and parameters for both modes
   const model = 'grok-3-latest'; // Use latest for both (was grok-3-mini for Twitter)
-  // Increase max_tokens for knowledge queries that need more space for insights
-  const maxTokens = needsLiveSearch ? 200 : (mode === 'chat' ? 120 : 100);
-  const temperature = 0.85;
+  // For live search queries, we need MORE tokens to include actual data (stats, scores, etc.)
+  // For regular chat, keep it brief
+  const maxTokens = needsLiveSearch ? 300 : (mode === 'chat' ? 150 : 150);
+  
+  // Adjust temperature based on creativity level
+  let temperature = 0.85; // Default balanced
+  if (advancedSettings?.creativityLevel) {
+    switch (advancedSettings.creativityLevel) {
+      case 'consistent':
+        temperature = 0.7;
+        break;
+      case 'balanced':
+        temperature = 0.85;
+        break;
+      case 'creative':
+        temperature = 1.0;
+        break;
+    }
+  }
   const presencePenalty = 0.6; // Strong anti-repetition
   const frequencyPenalty = 0.2;
 
@@ -714,11 +1190,28 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
           assistantMessage = validateAndFixReply(assistantMessage, targetUsername);
           // Enforce 2-sentence limit for Twitter replies (complete ideas, no cut-offs)
           assistantMessage = truncateToSentences(assistantMessage, 2);
-        }
-
-        // Enforce 1-sentence if requested for chat mode (skip for knowledge queries)
-        if (mode === 'chat' && enforceOneSentence && !needsLiveSearch) {
-          assistantMessage = truncateToFirstSentence(assistantMessage);
+        } else {
+          // Chat mode: Use dynamic length based on context
+          const lengthConfig = determineResponseLength(userMessage, conversationHistory, needsLiveSearch, mode, advancedSettings);
+          // For live search queries with actual data, allow more content
+          // Otherwise truncate to keep responses casual
+          const maxSentencesForTruncation = needsLiveSearch ? 4 : lengthConfig.maxSentences;
+          assistantMessage = truncateToSentences(assistantMessage, maxSentencesForTruncation);
+          
+          // If truncation resulted in incomplete sentence (no ending punctuation), remove it
+          const lastChar = assistantMessage.trim().slice(-1);
+          if (lastChar && !['.', '!', '?'].includes(lastChar)) {
+            // Remove the incomplete last sentence
+            const sentences = assistantMessage.match(/[^.!?]*[.!?]+/g);
+            if (sentences && sentences.length > 0) {
+              assistantMessage = sentences.slice(0, lengthConfig.maxSentences).join(' ').trim();
+            }
+          }
+          
+          // Legacy support: if enforceOneSentence is explicitly set, use it
+          if (enforceOneSentence && !needsLiveSearch) {
+            assistantMessage = truncateToFirstSentence(assistantMessage);
+          }
         }
       }
 

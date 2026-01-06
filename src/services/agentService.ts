@@ -27,9 +27,13 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
 export async function getAgentSettings(userId: string): Promise<AgentSettings> {
   const { data, error } = await db
     .from('profiles')
-    .select('agent_settings')
+    .select('agent_settings, twitter_access_token, twitter_refresh_token')
     .eq('id', userId)
     .single();
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:getAgentSettings',message:'Agent settings fetched',data:{userId,hasError:!!error,errorMessage:error?.message,hasAgentSettings:!!data?.agent_settings,hasTwitterToken:!!data?.twitter_access_token,hasRefreshToken:!!data?.twitter_refresh_token,agentEnabled:data?.agent_settings?.enabled,lastRunAt:data?.agent_settings?.lastRunAt},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
 
   if (error) {
     console.error('Failed to fetch agent settings:', error.message || error);
@@ -80,9 +84,17 @@ export async function toggleAgentMode(
   userId: string,
   enabled: boolean
 ): Promise<AgentSettings> {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:toggleAgentMode',message:'Toggle agent mode called',data:{userId,enabled},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
+  
   // Get current settings to check if we're enabling from disabled state
   const currentSettings = await getAgentSettings(userId);
   const wasDisabled = !currentSettings.enabled;
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:toggleAgentMode',message:'Current settings retrieved',data:{wasDisabled,currentLastRunAt:currentSettings.lastRunAt,frequency:currentSettings.frequency,targetAccountsCount:currentSettings.targetAccounts?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
   
   // If enabling Agent Mode (from disabled state), clear lastRunAt to trigger first-run optimization
   const updateData: Partial<AgentSettings> = { enabled };
@@ -91,6 +103,11 @@ export async function toggleAgentMode(
   }
   
   const updated = await updateAgentSettings(userId, updateData);
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/agentService.ts:toggleAgentMode',message:'Agent mode toggled successfully',data:{enabled:updated.enabled,lastRunAt:updated.lastRunAt,frequency:updated.frequency},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
+  
   return updated;
 }
 

@@ -5,7 +5,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit, RATE_LIMITS, rateLimitResponse } from '../_shared/rateLimit.ts';
-import { generateResponse, type CharacterCard, type PersonalityMetadata, type ConversationMessage } from '../_shared/generateResponse.ts';
+import { generateResponse, type CharacterCard, type PersonalityMetadata, type ConversationMessage, type ConversationContext } from '../_shared/generateResponse.ts';
 
 const SUPABASE_URL =
   Deno.env.get('PROJECT_URL') ??
@@ -35,6 +35,7 @@ interface ChatRequest {
   character_card: CharacterCard;
   conversation_history: ConversationMessage[];
   personality_metadata?: PersonalityMetadata;
+  conversation_context?: ConversationContext;
 }
 
 // Main handler
@@ -45,7 +46,7 @@ serve(async (req) => {
   }
 
   try {
-    const { user_id, session_id, message, character_card, conversation_history, personality_metadata } = await req.json() as ChatRequest;
+    const { user_id, session_id, message, character_card, conversation_history, personality_metadata, conversation_context } = await req.json() as ChatRequest;
 
     // Validate required fields
     if (!user_id || !message || !character_card) {
@@ -78,8 +79,9 @@ serve(async (req) => {
     console.log(`History: ${conversation_history?.length || 0} messages`);
     console.log(`Has personality metadata: ${!!personality_metadata}`);
 
-    // Fetch user preferences for emoji mode
+    // Fetch user preferences for emoji mode and advanced settings
     let emojiMode = false;
+    let advancedSettings: any = undefined;
     try {
       const supabaseAdmin = createSupabaseAdmin();
       const { data: profile } = await supabaseAdmin
@@ -92,9 +94,14 @@ serve(async (req) => {
         emojiMode = true;
         console.log('🎭 Emoji mode enabled for user');
       }
+      
+      if (profile?.preferences?.advanced_settings) {
+        advancedSettings = profile.preferences.advanced_settings;
+        console.log('⚙️ Advanced settings loaded:', Object.keys(advancedSettings).join(', '));
+      }
     } catch (error) {
       console.error('Error fetching user preferences:', error);
-      // Continue with emojiMode = false if fetch fails
+      // Continue with defaults if fetch fails
     }
 
     // Extract recent assistant responses for repetition detection
@@ -110,10 +117,12 @@ serve(async (req) => {
       personalityMetadata: personality_metadata,
       conversationHistory: conversation_history || [],
       recentResponses,
-      enforceOneSentence: true, // Chat mode: enforce 1 sentence
+      enforceOneSentence: true, // Chat mode: legacy support (dynamic length used instead)
       mode: 'chat',
       grokApiKey,
       emojiMode,
+      conversationContext: conversation_context,
+      advancedSettings,
     });
 
     if (!result) {

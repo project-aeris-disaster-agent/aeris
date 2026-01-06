@@ -213,8 +213,9 @@ async function generateMentionReply(
     return null;
   }
 
-  // Fetch user preferences for emoji mode
+  // Fetch user preferences for emoji mode and advanced settings
   let emojiMode = false;
+  let advancedSettings: any = undefined;
   try {
     const { data: profile } = await supabaseAdmin
       .from('profiles')
@@ -226,9 +227,14 @@ async function generateMentionReply(
       emojiMode = true;
       console.log('🎭 Emoji mode enabled for Twitter reply');
     }
+    
+    if (profile?.preferences?.advanced_settings) {
+      advancedSettings = profile.preferences.advanced_settings;
+      console.log('⚙️ Advanced settings loaded for Twitter reply:', Object.keys(advancedSettings).join(', '));
+    }
   } catch (error) {
     console.error('Error fetching user preferences:', error);
-    // Continue with emojiMode = false if fetch fails
+    // Continue with defaults if fetch fails
   }
 
   // Fetch recent replies from DB for anti-repetition (limit for efficiency)
@@ -248,6 +254,7 @@ async function generateMentionReply(
       grokApiKey: GROK_API_KEY,
       targetUsername, // Pass actual username for proper mentions
       emojiMode,
+      advancedSettings, // NOW PASSED: Universal advanced settings for Twitter replies
     });
 
     if (!result) {
@@ -514,6 +521,7 @@ async function executeInstantAgentActions(
           emojiPatterns: metadata.emojiPatterns || metadata.analysis_summary?.emoji_patterns || [],
           humorStyle: metadata.humorStyle || metadata.analysis_summary?.humor_style || '',
           vocabularyLevel: metadata.vocabularyLevel || metadata.analysis_summary?.vocabulary_level || '',
+          opinionStyle: metadata.opinionStyle || metadata.analysis_summary?.opinion_style || 'balanced',
         };
       }
     }

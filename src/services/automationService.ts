@@ -386,10 +386,14 @@ export async function cleanupOverdueTasks(userId: string): Promise<{
   // Find overdue pending tasks (scheduled_for in the past)
   const { data: overdueTasks, error: fetchError } = await db
     .from('scheduled_posts')
-    .select('id, scheduled_for, post_type')
+    .select('id, scheduled_for, post_type, error_message')
     .eq('user_id', userId)
     .eq('status', 'pending')
     .lt('scheduled_for', now.toISOString());
+
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/automationService.ts:cleanupOverdueTasks',message:'Overdue tasks query',data:{userId,now:now.toISOString(),overdueCount:overdueTasks?.length||0,hasError:!!fetchError,errorMessage:fetchError?.message,overdueTasks:overdueTasks?.slice(0,5).map(t=>({id:t.id,scheduledFor:t.scheduled_for,type:t.post_type,error:t.error_message}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
 
   if (fetchError) {
     console.error('Failed to fetch overdue tasks:', fetchError);
