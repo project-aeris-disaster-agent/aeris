@@ -4,7 +4,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { generateResponse, type CharacterCard, type PersonalityMetadata } from '../_shared/generateResponse.ts';
+import { generateResponse, shouldReplyToTweet, type CharacterCard, type PersonalityMetadata } from '../_shared/generateResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -237,11 +237,28 @@ async function generateMentionReply(
     // Continue with defaults if fetch fails
   }
 
+  // LLM Reply Decision Gate: Evaluate if we should reply to this tweet
+  const replyDecision = await shouldReplyToTweet(
+    targetTweet.text,
+    targetUsername,
+    characterCard,
+    undefined, // No thread context in instant execution
+    GROK_API_KEY
+  );
+
+  if (!replyDecision.shouldReply) {
+    console.log(`Skipping reply to tweet from @${targetUsername}: ${replyDecision.reason} (confidence: ${replyDecision.confidence})`);
+    return null;
+  }
+
+  console.log(`Decision to reply: ${replyDecision.reason}${replyDecision.suggestedAngle ? ` (angle: ${replyDecision.suggestedAngle})` : ''} (confidence: ${replyDecision.confidence})`);
+
   // Fetch recent replies from DB for anti-repetition (limit for efficiency)
   const recentResponses = await fetchRecentAgentReplies(supabaseAdmin, userId, 5);
 
   try {
     // Use shared response generation with Twitter mode (SAME brain as chat)
+    // Enable live search for intelligent, contextual replies
     const result = await generateResponse({
       characterCard,
       userMessage: targetTweet.text,
@@ -255,6 +272,7 @@ async function generateMentionReply(
       targetUsername, // Pass actual username for proper mentions
       emojiMode,
       advancedSettings, // NOW PASSED: Universal advanced settings for Twitter replies
+      enableLiveSearch: true, // Enable live search for intelligent, knowledge-backed replies
     });
 
     if (!result) {

@@ -371,28 +371,35 @@ export async function getScheduledPosts(userId: string) {
 }
 
 /**
- * Clean up overdue tasks that failed due to missing tokens
- * This helps users who logged out and back in, clearing orphaned tasks
+ * Clean up overdue tasks that are stuck (overdue by >24 hours)
+ * Only cancels posts that are significantly overdue to avoid conflicts with server-side execution.
+ * The server will attempt to execute posts that are only slightly overdue.
  * 
  * @param userId - The user's ID
+ * @param overdueHoursThreshold - Hours overdue before cancelling (default: 24)
  * @returns Object with cancelled count and any errors
  */
-export async function cleanupOverdueTasks(userId: string): Promise<{
+export async function cleanupOverdueTasks(
+  userId: string,
+  overdueHoursThreshold: number = 24
+): Promise<{
   cancelledCount: number;
   error?: string;
 }> {
   const now = new Date();
+  const thresholdDate = new Date(now.getTime() - overdueHoursThreshold * 60 * 60 * 1000);
   
-  // Find overdue pending tasks (scheduled_for in the past)
+  // Find overdue pending tasks that are overdue by more than threshold
+  // This gives the server time to execute and retry posts before cancelling them
   const { data: overdueTasks, error: fetchError } = await db
     .from('scheduled_posts')
-    .select('id, scheduled_for, post_type, error_message')
+    .select('id, scheduled_for, post_type, error_message, retry_count')
     .eq('user_id', userId)
     .eq('status', 'pending')
-    .lt('scheduled_for', now.toISOString());
+    .lt('scheduled_for', thresholdDate.toISOString());
 
   // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/automationService.ts:cleanupOverdueTasks',message:'Overdue tasks query',data:{userId,now:now.toISOString(),overdueCount:overdueTasks?.length||0,hasError:!!fetchError,errorMessage:fetchError?.message,overdueTasks:overdueTasks?.slice(0,5).map(t=>({id:t.id,scheduledFor:t.scheduled_for,type:t.post_type,error:t.error_message}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7242/ingest/ab3ebd77-2545-412d-b06f-2f603dbfb7bf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'src/services/automationService.ts:cleanupOverdueTasks',message:'Overdue tasks query',data:{userId,now:now.toISOString(),thresholdDate:thresholdDate.toISOString(),overdueHoursThreshold,overdueCount:overdueTasks?.length||0,hasError:!!fetchError,errorMessage:fetchError?.message,overdueTasks:overdueTasks?.slice(0,5).map(t=>({id:t.id,scheduledFor:t.scheduled_for,type:t.post_type,error:t.error_message,retryCount:t.retry_count}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
   // #endregion
 
   if (fetchError) {
@@ -401,29 +408,30 @@ export async function cleanupOverdueTasks(userId: string): Promise<{
   }
 
   if (!overdueTasks || overdueTasks.length === 0) {
-    console.log('No overdue tasks to clean up');
+    console.log('No overdue tasks to clean up (threshold: >24 hours overdue)');
     return { cancelledCount: 0 };
   }
 
-  console.log(`Found ${overdueTasks.length} overdue tasks to clean up`);
+  console.log(`Found ${overdueTasks.length} overdue tasks (>${overdueHoursThreshold}h) to clean up`);
 
-  // Cancel all overdue pending tasks
+  // Cancel only tasks that are overdue by more than threshold
+  // This prevents cancelling posts that the server is still trying to execute
   const { error: updateError } = await db
     .from('scheduled_posts')
     .update({
       status: 'cancelled',
-      error_message: 'Auto-cancelled: Task was overdue and could not be executed'
+      error_message: `Auto-cancelled: Task was overdue by >${overdueHoursThreshold}h and could not be executed`
     })
     .eq('user_id', userId)
     .eq('status', 'pending')
-    .lt('scheduled_for', now.toISOString());
+    .lt('scheduled_for', thresholdDate.toISOString());
 
   if (updateError) {
     console.error('Failed to cancel overdue tasks:', updateError);
     return { cancelledCount: 0, error: updateError.message };
   }
 
-  console.log(`✅ Cancelled ${overdueTasks.length} overdue tasks`);
+  console.log(`✅ Cancelled ${overdueTasks.length} overdue tasks (>${overdueHoursThreshold}h overdue)`);
   return { cancelledCount: overdueTasks.length };
 }
 

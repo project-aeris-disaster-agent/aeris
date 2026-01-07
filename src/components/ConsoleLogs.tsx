@@ -100,7 +100,7 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
     userId,
     enabled: isOpen,
     pendingLimit: 50,
-    completedLimit: 100,
+    // No limit on completed posts - show all history
   });
 
   // Use shared hook for predicted actions

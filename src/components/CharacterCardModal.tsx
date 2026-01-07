@@ -586,7 +586,7 @@ export function CharacterCardModal({
           </div>
 
           {/* Content */}
-          <div className="overflow-y-auto max-h-[calc(90vh-140px)] p-6">
+          <div className="overflow-y-auto max-h-[calc(90vh-140px)] p-6 pb-24 sm:pb-6">
             {/* Generating State */}
             {state === 'generating' && (
               <div className="flex flex-col items-center justify-center py-16">
@@ -1510,56 +1510,55 @@ export function CharacterCardModal({
 
           {/* Footer Actions */}
           {(state === 'preview' || state === 'editing') && (
-            <div className="sticky bottom-0 flex items-center justify-between px-6 py-4 border-t border-white/10 bg-black/80 backdrop-blur-md">
-              <div className="flex gap-2">
+            <div className="sticky bottom-0 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-0 px-3 sm:px-6 py-3 sm:py-4 border-t border-white/10 bg-black/80 backdrop-blur-md">
+              <div className="flex gap-2 flex-wrap sm:flex-nowrap">
                 <button
                   onClick={handleExport}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 text-sm transition-colors"
+                  className="flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 text-xs sm:text-sm transition-colors flex-1 sm:flex-initial min-w-0"
                 >
-                  <Download className="w-4 h-4" />
-                  Export
+                  <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                  <span className="truncate text-center">Export</span>
                 </button>
                 <button
                   onClick={handleRegenerateClick}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-yellow-400 text-sm transition-colors"
+                  className="flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-yellow-400 text-xs sm:text-sm transition-colors flex-1 sm:flex-initial min-w-0"
                 >
-                  <RefreshCw className="w-4 h-4" />
-                  Regenerate
-                  <span className="text-[10px] opacity-70">${REGENERATE_FEE}</span>
+                  <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                  <span className="truncate text-center">Update Persona</span>
                 </button>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-1 sm:flex-initial">
                 {state === 'preview' ? (
                   <>
                     <button
                       onClick={() => setState('editing')}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                      className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm transition-colors flex-1 sm:flex-initial min-w-0"
                     >
-                      <Edit3 className="w-4 h-4" />
-                      Edit
+                      <Edit3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                      <span className="truncate text-center">Edit</span>
                     </button>
                     <button
                       onClick={handleSave}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-pink-600 to-cyan-500 text-white font-medium transition-transform hover:scale-105"
+                      className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-gradient-to-r from-pink-600 to-cyan-500 text-white font-medium text-xs sm:text-sm transition-transform hover:scale-105 flex-1 sm:flex-initial min-w-0"
                     >
-                      <Save className="w-4 h-4" />
-                      Save Clone
+                      <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                      <span className="truncate text-center">Save Clone</span>
                     </button>
                   </>
                 ) : (
                   <>
                     <button
                       onClick={onClose}
-                      className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                      className="flex items-center justify-center px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm transition-colors flex-1 sm:flex-initial min-w-0 text-center"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSave}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-pink-600 to-cyan-500 text-white font-medium transition-transform hover:scale-105"
+                      className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-gradient-to-r from-pink-600 to-cyan-500 text-white font-medium text-xs sm:text-sm transition-transform hover:scale-105 flex-1 sm:flex-initial min-w-0"
                     >
-                      <Save className="w-4 h-4" />
-                      Save Changes
+                      <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                      <span className="truncate text-center">Save Changes</span>
                     </button>
                   </>
                 )}

@@ -55,6 +55,7 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('pending');
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [agentStats, setAgentStats] = useState<{ pendingActions: number; lastRunAt: Date | null } | null>(null);
 
   // Use shared hooks for task data
@@ -62,7 +63,7 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
     userId,
     enabled: isExpanded,
     pendingLimit: 50,
-    completedLimit: 100,
+    // No limit on completed posts - show all history
   });
 
   // Use shared hook for predicted actions
@@ -77,8 +78,9 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
   // Load agent stats and clean up any overdue tasks on mount
   useEffect(() => {
     if (userId) {
-      // First, clean up any overdue tasks that failed due to logout/token issues
-      // This runs once on component mount to clear orphaned tasks
+      // Clean up tasks that are overdue by >24 hours (stuck/orphaned tasks)
+      // This gives the server time to execute and retry posts before cancelling
+      // Only cancels posts that are significantly overdue to avoid conflicts
       cleanupOverdueTasks(userId)
         .then((result) => {
           // #region agent log
@@ -172,6 +174,38 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
       );
     } finally {
       setCancellingId(null);
+    }
+  };
+
+  // Delete a history item (completed/failed post)
+  const handleDelete = async (postId: string) => {
+    setDeletingId(postId);
+    try {
+      const { error } = await db
+        .from('scheduled_posts')
+        .delete()
+        .eq('id', postId)
+        .eq('user_id', userId)
+        .in('status', ['posted', 'failed', 'cancelled']); // Only allow deleting completed items
+
+      if (error) {
+        console.error('Failed to delete post:', error);
+        throw error;
+      }
+
+      // Refresh tasks to update UI
+      refreshTasks();
+      showSuccess('History item deleted successfully', 3000);
+    } catch (error) {
+      console.error('Failed to delete post:', error);
+      showError(
+        error instanceof Error 
+          ? `Failed to delete: ${error.message}`
+          : 'Failed to delete history item. Please try again.',
+        5000
+      );
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -445,7 +479,7 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
                               key={post.id}
                               initial={{ opacity: 0, x: -10 }}
                               animate={{ opacity: 1, x: 0 }}
-                              className={`relative p-2.5 rounded-lg border transition-all ${
+                              className={`group relative p-2.5 rounded-lg border transition-all ${
                                 isSuccess
                                   ? 'bg-green-500/5 border-green-500/20'
                                   : 'bg-red-500/5 border-red-500/20'
@@ -503,6 +537,23 @@ export function AutomationQueue({ userId, isVisible = true, agentModeEnabled: ex
                                       </a>
                                     )}
                                   </div>
+                                </div>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDelete(post.id);
+                                    }}
+                                    disabled={deletingId === post.id}
+                                    className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 transition-colors disabled:opacity-50"
+                                    title="Delete from history"
+                                  >
+                                    {deletingId === post.id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="w-3 h-3" />
+                                    )}
+                                  </button>
                                 </div>
                               </div>
                             </motion.div>

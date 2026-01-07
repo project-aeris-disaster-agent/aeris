@@ -248,6 +248,149 @@ export interface GenerateResponseOptions {
   advancedSettings?: AdvancedSettings; // Fine-tuning knobs for personality expression
 }
 
+// ============================================================================
+// REPLY DECISION GATE - LLM evaluates if agent should reply to tweet
+// ============================================================================
+
+export interface ReplyDecision {
+  shouldReply: boolean;
+  reason: string;
+  suggestedAngle?: string;  // If yes, what angle to take
+  confidence: 'high' | 'medium' | 'low';
+}
+
+/**
+ * LLM gatekeeper: Decide if agent should reply to a tweet
+ * Prevents generic/empty replies by evaluating value potential
+ */
+export async function shouldReplyToTweet(
+  tweetText: string,
+  tweetAuthor: string,
+  characterCard: CharacterCard,
+  threadContext?: string,
+  grokApiKey: string
+): Promise<ReplyDecision> {
+  const expertise = characterCard.knowledge.slice(0, 5).join(', ');
+  const topics = characterCard.topics.slice(0, 5).join(', ');
+  
+  const systemPrompt = `You are an intelligent filter evaluating whether a Twitter agent should reply to a tweet.
+Your goal is to prevent generic, low-value replies that add no substance to conversations.
+Be strict - only approve replies that genuinely add value.`;
+
+  const userPrompt = `You are evaluating whether @${characterCard.name} should reply to this tweet.
+
+TWEET: "${tweetText}"
+AUTHOR: @${tweetAuthor}
+${threadContext ? `THREAD CONTEXT:\n${threadContext}` : ''}
+
+YOUR EXPERTISE: ${expertise}
+YOUR TOPICS: ${topics}
+
+EVALUATE:
+
+1. VALUE POTENTIAL
+   - Can you add specific facts, stats, or unique insights?
+   - Do you have genuine expertise on this topic?
+   - Would your reply start or continue meaningful discourse?
+
+2. CONVERSATION APPROPRIATENESS  
+   - Is this an invitation for discussion or a closed statement?
+   - Is the author seeking engagement or just sharing?
+   - Would replying feel natural or forced/spammy?
+
+3. TOPIC ALIGNMENT
+   - Does this relate to your areas of expertise?
+   - Can you speak authentically on this subject?
+
+RESPOND WITH JSON ONLY:
+{
+  "shouldReply": true/false,
+  "reason": "Brief explanation",
+  "suggestedAngle": "If yes, the specific angle/point to make (omit if shouldReply is false)",
+  "confidence": "high/medium/low"
+}
+
+SKIP if:
+- You can only offer generic agreement ("that's fire!", "that vibe is crazy")
+- The tweet is rhetorical and doesn't invite response
+- You have no specific knowledge to add
+- Replying would feel performative rather than genuine
+- The topic doesn't align with your expertise`;
+
+  try {
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${grokApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'grok-3-latest',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.3, // Low temp for consistent decision-making
+        max_tokens: 200,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Error in reply decision gate:', response.status);
+      // Default to allowing reply if API fails (fail open to avoid blocking all replies)
+      return {
+        shouldReply: true,
+        reason: 'Decision API unavailable, allowing reply',
+        confidence: 'low'
+      };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content?.trim() || '';
+    
+    if (!content) {
+      return {
+        shouldReply: true,
+        reason: 'Empty response from decision API',
+        confidence: 'low'
+      };
+    }
+
+    // Parse JSON, handling markdown code blocks
+    let jsonContent = content.trim();
+    if (jsonContent.startsWith('```json')) {
+      jsonContent = jsonContent.slice(7);
+    } else if (jsonContent.startsWith('```')) {
+      jsonContent = jsonContent.slice(3);
+    }
+    if (jsonContent.endsWith('```')) {
+      jsonContent = jsonContent.slice(0, -3);
+    }
+    jsonContent = jsonContent.trim();
+
+    try {
+      const decision = JSON.parse(jsonContent) as ReplyDecision;
+      console.log(`Reply decision: ${decision.shouldReply ? 'YES' : 'NO'} - ${decision.reason} (confidence: ${decision.confidence})`);
+      return decision;
+    } catch (parseError) {
+      console.error('Failed to parse reply decision JSON:', parseError, 'Content:', jsonContent.substring(0, 200));
+      return {
+        shouldReply: true,
+        reason: 'Failed to parse decision, allowing reply',
+        confidence: 'low'
+      };
+    }
+  } catch (error) {
+    console.error('Error in shouldReplyToTweet:', error);
+    // Fail open - allow reply if decision gate fails
+    return {
+      shouldReply: true,
+      reason: 'Decision gate error, allowing reply',
+      confidence: 'low'
+    };
+  }
+}
+
 // Keywords that indicate a query needs real-time information
 const KNOWLEDGE_QUERY_KEYWORDS = [
   // Twitter/social sentiment
@@ -914,11 +1057,35 @@ USERNAME RULES:
 2. NEVER write "@user" - this is BANNED
 3. If unsure, start with "Hey" or "Yo" without a mention
 
+🚫 BANNED WORDS/PHRASES (instant rejection):
+- "vibe", "vibes", "vibing"
+- "fire", "straight fire", "pure fire"
+- "energy", "that energy"
+- "chaos", "pure chaos"
+- "hits different"
+- "let's go", "let's goooo"
+- Generic exclamations without substance
+
+YOUR REPLY MUST CONTAIN:
+- At least ONE specific fact, stat, name, or concrete detail
+- OR a genuine question that advances the conversation
+- OR a unique perspective grounded in your expertise
+
 REPLY QUALITY:
 - Reference SPECIFIC details from their tweet
-- If they asked a question, ANSWER IT in 1-2 sentences
-- Add VALUE - don't just agree
+- If they asked a question, ANSWER IT in 1-2 sentences with actual information
+- Add VALUE - don't just agree or react emotionally
 - Be engaging but not spammy
+- Use your expertise to provide insights, not just validation
+
+BAD EXAMPLES (DO NOT DO THIS):
+- "Yo @user, that hunter/hunted vibe is pure F1 chaos!"
+- "Hey @user, that energy is unreal!"
+- "That's straight fire!"
+
+GOOD EXAMPLES (DO THIS):
+- "The gap to Red Bull is finally closing - Ferrari's Singapore upgrades are no joke. Leclerc's pace in sector 2 was wild."
+- "Verstappen had 6 straight wins before Singapore. With Leclerc and Sainz both on the podium, Ferrari's actually made up 40 points in 3 races."
 
 NO URLS - never include links or made-up websites
 ${antiRepetitionSection}`;

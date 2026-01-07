@@ -11,7 +11,7 @@ interface UseScheduledTasksOptions {
   enabled?: boolean;
   refreshInterval?: number; // in milliseconds, default 30000 (30 seconds)
   pendingLimit?: number; // default 50
-  completedLimit?: number; // default 100
+  completedLimit?: number; // default undefined (no limit)
 }
 
 interface UseScheduledTasksReturn {
@@ -36,7 +36,7 @@ export function useScheduledTasks({
   enabled = true,
   refreshInterval = DEFAULT_REFRESH_INTERVAL,
   pendingLimit = 50,
-  completedLimit = 100,
+  completedLimit, // No default - unlimited if not specified
 }: UseScheduledTasksOptions): UseScheduledTasksReturn {
   const [pending, setPending] = useState<ScheduledPostsRow[]>([]);
   const [completed, setCompleted] = useState<ScheduledPostsRow[]>([]);
@@ -62,14 +62,20 @@ export function useScheduledTasks({
       if (pendingError) throw pendingError;
 
       // Fetch completed tasks (posted + failed)
-      const { data: completedData, error: completedError } = await db
+      let completedQuery = db
         .from('scheduled_posts')
         .select('*')
         .eq('user_id', userId)
         .in('status', ['posted', 'failed'])
         .order('posted_at', { ascending: false, nullsFirst: false })
-        .order('scheduled_for', { ascending: false })
-        .limit(completedLimit);
+        .order('scheduled_for', { ascending: false });
+      
+      // Only apply limit if specified
+      if (completedLimit !== undefined) {
+        completedQuery = completedQuery.limit(completedLimit);
+      }
+      
+      const { data: completedData, error: completedError } = await completedQuery;
 
       if (completedError) throw completedError;
 
