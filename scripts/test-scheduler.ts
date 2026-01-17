@@ -37,8 +37,8 @@ async function testScheduler() {
     console.log('ℹ️  No pending posts to process. The scheduler will run when posts are scheduled.\n');
     console.log('✅ Scheduler is ready! You can:');
     console.log('   - Schedule a post via the UI');
-    console.log('   - Wait for the daily cron job (9 AM UTC)');
-    console.log('   - Manually trigger via: POST /api/cron/process-posts\n');
+    console.log('   - Wait for pg_cron (runs every 5 minutes automatically)');
+    console.log('   - Manually trigger Edge Function: POST /functions/v1/process-scheduled-posts\n');
     return;
   }
 

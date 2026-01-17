@@ -8,6 +8,8 @@
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test:agent": "tsx scripts/test-agent-features.ts",
+    "test:intelligence": "tsx scripts/test-agent-intelligence.ts",
+    "test:live-decisions": "tsx scripts/test-live-agent-decisions.ts",
     "vercel:env:setup": "node scripts/setup-vercel-env.js",
     "vercel:env:pull": "vercel env pull .env.local",
     "vercel:env:ls": "vercel env ls",

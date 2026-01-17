@@ -220,7 +220,8 @@ This document explains how CRON jobs and Edge Functions work together in the SON
 
 ### API Routes:
 - `api/cron/process-agent.ts` - Vercel CRON handler for agent discovery
-- `api/cron/process-posts.ts` - Vercel CRON handler (kept for manual triggers, not scheduled)
+- ~~`api/cron/process-posts.ts`~~ - **Removed** (redundant - pg_cron handles execution every 5 minutes)
+  - For manual testing, call Edge Function directly: `POST /functions/v1/process-scheduled-posts`
 
 ### Edge Functions:
 - `supabase/functions/process-agent-actions/index.ts` - Agent discovery logic

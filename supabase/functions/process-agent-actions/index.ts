@@ -5,7 +5,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { generateResponse, shouldReplyToTweet, type CharacterCard, type PersonalityMetadata } from '../_shared/generateResponse.ts';
+import { generateResponse, type CharacterCard, type PersonalityMetadata } from '../_shared/generateResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,12 +26,48 @@ const TWITTER_CLIENT_SECRET = Deno.env.get('TWITTER_CLIENT_SECRET') ?? '';
 const GROK_API_KEY = Deno.env.get('GROK_API_KEY') ?? '';
 
 // Rate limiting for Twitter API calls (avoid 429 errors)
-const TWITTER_API_DELAY_MS = 1000; // 1 second between Twitter API calls
+const TWITTER_API_DELAY_MS = 1200; // 1.2 seconds between Twitter API calls
+const ACCOUNT_DELAY_MS = 2500; // 2.5 seconds between target accounts
+const ACCOUNT_DELAY_JITTER_MS = 1000; // Add jitter to reduce burst patterns
 const BATCH_DELAY_MS = 2000; // 2 seconds between user batches
-const MAX_TARGET_ACCOUNTS_PER_RUN = 3; // Limit target accounts per user per run
+const RATE_LIMIT_RETRY_DELAY_MS = 5000; // 5 seconds before retry on 429
+const RATE_LIMIT_MAX_WAIT_MS = 30000; // Cap wait to 30s to avoid long stalls
+const MAX_TARGET_ACCOUNTS_PER_RUN = 3; // Safe batch size per run (rotation handles all)
+const TARGET_ID_CACHE_TTL_HOURS = 168; // 7 days
 
 /** Helper to add delay between API calls to avoid rate limits */
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitForRateLimitReset(response: Response): Promise<void> {
+  const resetHeader = response.headers.get('x-rate-limit-reset');
+  if (resetHeader) {
+    const resetEpochMs = parseInt(resetHeader, 10) * 1000;
+    const waitMs = resetEpochMs - Date.now();
+    if (waitMs > 0) {
+      await delay(Math.min(waitMs, RATE_LIMIT_MAX_WAIT_MS));
+      return;
+    }
+  }
+  await delay(RATE_LIMIT_RETRY_DELAY_MS);
+}
+
+function getJitteredDelay(baseMs: number, jitterMs: number): number {
+  return baseMs + Math.floor(Math.random() * jitterMs);
+}
+
+function getCachedTargetUserId(
+  cache: Record<string, { id: string; cachedAt: string }> | undefined,
+  username: string
+): string | null {
+  if (!cache || !cache[username]) return null;
+  const cached = cache[username];
+  const cachedAt = new Date(cached.cachedAt).getTime();
+  const ageHours = (Date.now() - cachedAt) / (1000 * 60 * 60);
+  if (Number.isNaN(ageHours) || ageHours > TARGET_ID_CACHE_TTL_HOURS) {
+    return null;
+  }
+  return cached.id;
+}
 
 // Agent settings type (matches TypeScript definition)
 interface TargetAccountConfig {
@@ -92,6 +128,8 @@ interface AgentSettings {
   contentFilter?: ContentFilterConfig;
   rateLimits?: RateLimitConfig;
   scheduling?: SchedulingConfig;
+  targetAccountCursor?: number;
+  targetAccountIdCache?: Record<string, { id: string; cachedAt: string }>;
 }
 
 interface UserWithAgentSettings {
@@ -377,7 +415,7 @@ function shouldRunAgent(settings: AgentSettings): boolean {
 async function getTwitterUserIdByUsername(
   username: string,
   accessToken: string
-): Promise<string | null> {
+): Promise<{ id: string | null; rateLimited: boolean }> {
   // Add delay before API call to avoid rate limits
   await delay(TWITTER_API_DELAY_MS);
   
@@ -391,15 +429,27 @@ async function getTwitterUserIdByUsername(
   if (!response.ok) {
     const status = response.status;
     if (status === 429) {
-      console.error(`Rate limited fetching user ID for @${username} - will retry next run`);
-    } else {
-      console.error(`Failed to fetch user ID for @${username}:`, status);
+      console.warn(`Rate limited fetching user ID for @${username} - retrying once...`);
+      await waitForRateLimitReset(response);
+      const retry = await fetch(
+        `https://api.twitter.com/2/users/by/username/${username}`,
+        {
+          headers: { 'Authorization': `Bearer ${accessToken}` },
+        }
+      );
+      if (!retry.ok) {
+        console.error(`Retry failed fetching user ID for @${username}:`, retry.status);
+        return { id: null, rateLimited: retry.status === 429 };
+      }
+      const retryData = await retry.json();
+      return { id: retryData.data?.id || null, rateLimited: false };
     }
-    return null;
+    console.error(`Failed to fetch user ID for @${username}:`, status);
+    return { id: null, rateLimited: false };
   }
 
   const data = await response.json();
-  return data.data?.id || null;
+  return { id: data.data?.id || null, rateLimited: false };
 }
 
 /**
@@ -409,7 +459,7 @@ async function fetchTargetAccountTweets(
   targetUserId: string,
   accessToken: string,
   sinceHours: number = 48
-): Promise<TwitterTweet[]> {
+): Promise<{ tweets: TwitterTweet[]; rateLimited: boolean }> {
   // Add delay before API call to avoid rate limits
   await delay(TWITTER_API_DELAY_MS);
   
@@ -430,15 +480,27 @@ async function fetchTargetAccountTweets(
   if (!response.ok) {
     const status = response.status;
     if (status === 429) {
-      console.error(`Rate limited fetching tweets for user ${targetUserId} - will retry next run`);
-    } else {
-      console.error(`Failed to fetch tweets for user ${targetUserId}:`, status);
+      console.warn(`Rate limited fetching tweets for user ${targetUserId} - retrying once...`);
+      await waitForRateLimitReset(response);
+      const retry = await fetch(
+        `https://api.twitter.com/2/users/${targetUserId}/tweets?${params}`,
+        {
+          headers: { 'Authorization': `Bearer ${accessToken}` },
+        }
+      );
+      if (!retry.ok) {
+        console.error(`Retry failed fetching tweets for user ${targetUserId}:`, retry.status);
+        return { tweets: [], rateLimited: retry.status === 429 };
+      }
+      const retryData = await retry.json();
+      return { tweets: retryData.data || [], rateLimited: false };
     }
-    return [];
+    console.error(`Failed to fetch tweets for user ${targetUserId}:`, status);
+    return { tweets: [], rateLimited: false };
   }
 
   const data = await response.json();
-  return data.data || [];
+  return { tweets: data.data || [], rateLimited: false };
 }
 
 /**
@@ -641,22 +703,6 @@ async function generateMentionReply(
     }
   }
 
-  // LLM Reply Decision Gate: Evaluate if we should reply to this tweet
-  const replyDecision = await shouldReplyToTweet(
-    targetTweet.text,
-    targetUsername,
-    characterCard,
-    threadContext || undefined,
-    GROK_API_KEY
-  );
-
-  if (!replyDecision.shouldReply) {
-    console.log(`Skipping reply to tweet from @${targetUsername}: ${replyDecision.reason} (confidence: ${replyDecision.confidence})`);
-    return null;
-  }
-
-  console.log(`Decision to reply: ${replyDecision.reason}${replyDecision.suggestedAngle ? ` (angle: ${replyDecision.suggestedAngle})` : ''} (confidence: ${replyDecision.confidence})`);
-
   // Fetch recent replies from DB for anti-repetition (limit for efficiency)
   const recentResponses = await fetchRecentAgentReplies(supabaseAdmin, userId, 5);
   console.log(`Fetched ${recentResponses.length} recent replies for anti-repetition`);
@@ -669,9 +715,10 @@ async function generateMentionReply(
       userMessage: targetTweet.text,
       personalityMetadata, // NOW PASSED: Same personality enhancement as chat
       context: threadContext,
+      suggestedAngle: undefined,
       recentResponses,
-      minLength: 120, // Twitter minimum character limit
-      maxLength: 180, // Twitter maximum character limit
+      minLength: 70, // More flexible range to avoid templated replies
+      maxLength: 220,
       enforceOneSentence: false, // Twitter replies can be longer if needed
       mode: 'twitter',
       grokApiKey: GROK_API_KEY,
@@ -1043,18 +1090,35 @@ async function processUserAgentActions(
       settings.scheduling
     );
 
-    // Limit target accounts per run to avoid rate limits
-    const targetAccountsToProcess = settings.targetAccounts.slice(0, MAX_TARGET_ACCOUNTS_PER_RUN);
-    if (settings.targetAccounts.length > MAX_TARGET_ACCOUNTS_PER_RUN) {
-      console.log(`Limiting to ${MAX_TARGET_ACCOUNTS_PER_RUN} target accounts (${settings.targetAccounts.length} total)`);
-    }
+    // Process a safe batch of target accounts (rotation ensures all are covered)
+    const totalTargets = settings.targetAccounts.length;
+    const batchSize = Math.min(MAX_TARGET_ACCOUNTS_PER_RUN, totalTargets);
+    const cursor = settings.targetAccountCursor ?? 0;
+    const targetAccountsToProcess = Array.from({ length: batchSize }, (_, idx) => {
+      return settings.targetAccounts[(cursor + idx) % totalTargets];
+    });
+    const nextCursor = (cursor + batchSize) % totalTargets;
+    const targetIdCache = { ...(settings.targetAccountIdCache || {}) };
+    let cacheDirty = false;
 
     // Process each target account
     for (const targetAccount of targetAccountsToProcess) {
       const targetUsername = getTargetUsername(targetAccount);
       const accountActions = getAccountActions(targetAccount, settings.actions);
-      // Get target user ID
-      const targetUserId = await getTwitterUserIdByUsername(targetUsername, accessToken);
+      // Get target user ID (cached when possible)
+      let targetUserId = getCachedTargetUserId(targetIdCache, targetUsername);
+      if (!targetUserId) {
+        const userIdResult = await getTwitterUserIdByUsername(targetUsername, accessToken);
+        if (userIdResult.rateLimited) {
+          console.warn(`Rate limit reached while resolving @${targetUsername}. Stopping early.`);
+          break;
+        }
+        targetUserId = userIdResult.id;
+        if (targetUserId) {
+          targetIdCache[targetUsername] = { id: targetUserId, cachedAt: new Date().toISOString() };
+          cacheDirty = true;
+        }
+      }
       if (!targetUserId) {
         console.log(`Could not find Twitter user: @${targetUsername}`);
         continue;
@@ -1075,7 +1139,12 @@ async function processUserAgentActions(
       }
 
       // Fetch recent tweets
-      const tweets = await fetchTargetAccountTweets(targetUserId, accessToken);
+      const tweetResult = await fetchTargetAccountTweets(targetUserId, accessToken);
+      if (tweetResult.rateLimited) {
+        console.warn(`Rate limit reached while fetching tweets for @${targetUsername}. Stopping early.`);
+        break;
+      }
+      const tweets = tweetResult.tweets;
       if (tweets.length === 0) {
         console.log(`No recent tweets from @${targetUsername}`);
         continue;
@@ -1241,6 +1310,22 @@ async function processUserAgentActions(
           }
         }
       }
+
+      // Small delay between accounts to reduce rate limit risk
+      await delay(getJitteredDelay(ACCOUNT_DELAY_MS, ACCOUNT_DELAY_JITTER_MS));
+    }
+
+    if (cacheDirty || nextCursor !== cursor) {
+      await supabaseAdmin
+        .from('profiles')
+        .update({
+          agent_settings: {
+            ...settings,
+            targetAccountCursor: nextCursor,
+            targetAccountIdCache: targetIdCache,
+          },
+        })
+        .eq('id', user.id);
     }
 
     // Update lastRunAt

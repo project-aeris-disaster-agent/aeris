@@ -1,6 +1,7 @@
 // Shared Response Generation for Chat and Twitter Replies
 // UNIFIED BRAIN: Both chat and Twitter use the same personality core
 // Supports Grok's Twitter knowledge and web search capabilities for intelligent responses
+import { BANNED_PHRASES, buildBannedPhrasePatterns, buildAiSlopPatterns } from './bannedPhrases.ts';
 
 export interface CharacterCard {
   name: string;
@@ -34,6 +35,15 @@ interface SignatureInjection {
   openers: string[];
   fillers: string[];
   closers: string[];
+}
+
+interface TwitterReplyArchetype {
+  name: string;
+  guidance: string;
+  minChars: number;
+  maxChars: number;
+  minSentences: number;
+  maxSentences: number;
 }
 
 export interface ConversationContext {
@@ -97,26 +107,26 @@ function buildUnifiedPersonalityProfile(
   
   // CROSS-POLLINATE voice examples: Both modes see conversation AND writing style
   const conversationExamples = card.messageExamples
-    .slice(0, 2)
+    .slice(0, 4)
     .map(convo => {
       const assistantMsg = convo.find(m => m.user !== '{{user1}}');
       if (assistantMsg?.content?.text) {
         const text = assistantMsg.content.text;
-        return text.length > 60 ? text.substring(0, 60) + '...' : text;
+        return text.length > 80 ? text.substring(0, 80) + '...' : text;
       }
       return null;
     })
     .filter(Boolean);
   
-  const writingExamples = card.postExamples.slice(0, 2).map(ex => 
-    ex.length > 60 ? ex.substring(0, 60) + '...' : ex
+  const writingExamples = card.postExamples.slice(0, 3).map(ex => 
+    ex.length > 80 ? ex.substring(0, 80) + '...' : ex
   );
   
   // Combine voice examples (keeps token count low)
   const voiceExamples = [
     ...conversationExamples.map(ex => `• "${ex}"`),
     ...writingExamples.map(ex => `• "${ex}"`),
-  ].slice(0, 3).join('\n'); // Max 3 examples total for efficiency
+  ].slice(0, 4).join('\n'); // Max 4 examples total for efficiency
   
   // Enhanced personality from metadata (BOTH modes now use this)
   let enhancedPersonality = '';
@@ -150,6 +160,100 @@ function buildUnifiedPersonalityProfile(
   };
 }
 
+function stableHash(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function buildStyleSeed(card: CharacterCard, metadata?: PersonalityMetadata): number {
+  const seedInput = [
+    card.name,
+    card.bio?.[0],
+    card.lore?.[0],
+    card.topics?.[0],
+    metadata?.signaturePhrases?.[0],
+    metadata?.humorStyle,
+  ]
+    .filter(Boolean)
+    .join('|');
+
+  return stableHash(seedInput || card.name);
+}
+
+function selectTwitterReplyArchetype(
+  card: CharacterCard,
+  metadata?: PersonalityMetadata
+): TwitterReplyArchetype {
+  const seed = buildStyleSeed(card, metadata);
+  const archetypes: TwitterReplyArchetype[] = [
+    {
+      name: 'Analytical',
+      guidance: `STRUCTURE: Lead with fact/insight → brief takeaway. NO greeting.
+OPENER: Skip greeting entirely. Start with data, stat, or observation.
+EXAMPLE STARTS: "The data shows..." / "Actually, [specific stat]..." / "[Concrete observation]—"
+BANNED: "Hey/Yo", acknowledgments like "I hear ya", filler phrases.
+For hot takes: Agree with data ("The numbers back this up—") or challenge with specifics ("That misses [specific thing] because...")`,
+      minChars: 90,
+      maxChars: 210,
+      minSentences: 1,
+      maxSentences: 2,
+    },
+    {
+      name: 'Conversational',
+      guidance: `STRUCTURE: Quick reaction → specific point or question. Feels like mid-thread.
+OPENER: Use reactions NOT greetings. Try "Wait—" / "Hmm" / "Ok but" / "Fr" / "This." / or just @mention.
+EXAMPLE STARTS: "Wait @username—" / "Ngl" / "Lowkey" / "@username ok but"
+BANNED: "Hey @username", "Yo @username", "I hear ya", "sounds intense".
+For hot takes: React then engage ("Fr tho—but what about [specific]?" or "Wait, isn't that also true for [X]?")`,
+      minChars: 70,
+      maxChars: 190,
+      minSentences: 1,
+      maxSentences: 3,
+    },
+    {
+      name: 'Contrarian',
+      guidance: `STRUCTURE: Disagreement/reframe FIRST → supporting point. No acknowledgment.
+OPENER: Lead with challenge. "Nah," / "Hard disagree:" / "Counterpoint:" / "Actually no—"
+EXAMPLE STARTS: "Nah, that misses..." / "The real issue is..." / "I'd push back on that—"
+BANNED: "I hear ya but", "Valid point but", "Hey/Yo", any acknowledgment before disagreeing.
+For hot takes: Challenge directly without softening ("That's wrong because [specific]" not "I get it but...")`,
+      minChars: 90,
+      maxChars: 220,
+      minSentences: 1,
+      maxSentences: 2,
+    },
+    {
+      name: 'Storyteller',
+      guidance: `STRUCTURE: Micro-anecdote (1 line) → connection to their point → insight.
+OPENER: Start with the story/memory. "Reminds me of..." / "Same thing happened with..." / "This is like when..."
+EXAMPLE STARTS: "This reminds me of [specific thing]—" / "Same energy as when [concrete example]..."
+BANNED: "Hey/Yo", generic reactions, acknowledgments before story.
+For hot takes: Share a related experience that either supports or challenges their take.`,
+      minChars: 110,
+      maxChars: 230,
+      minSentences: 2,
+      maxSentences: 3,
+    },
+    {
+      name: 'Punchy',
+      guidance: `STRUCTURE: Sharp one-liner OR reaction + one specific detail. Maximum impact, minimum words.
+OPENER: Reaction word/phrase only. "Wild." / "This." / "Fr." / "Nah." / "@mention" alone.
+EXAMPLE STARTS: "Wild." / "This is it." / "Nah." / "Facts." / "@username 100%"
+BANNED: "Hey/Yo @username", multi-sentence acknowledgments, filler phrases, explanations.
+For hot takes: One-word stance + brief point ("Hard disagree. [Specific reason]" or "Facts. [Brief elaboration]")`,
+      minChars: 60,
+      maxChars: 160,
+      minSentences: 1,
+      maxSentences: 2,
+    },
+  ];
+
+  return archetypes[seed % archetypes.length];
+}
+
 /**
  * Build the shared personality core section
  * Used by BOTH chat and Twitter prompts
@@ -179,17 +283,7 @@ ${profile.communicationStyle}
 • This should feel like texting a friend, not reading a press release
 
 🚫 BANNED PHRASES (these scream "AI"):
-• "I understand your concern"
-• "That's a great question"
-• "I appreciate you sharing"
-• "Let me explain"
-• "In conclusion"
-• "It's important to note"
-• "I would recommend"
-• "Based on my analysis"
-• "To summarize"
-• "Feel free to"
-• "I hope this helps"
+${BANNED_PHRASES.map((phrase) => `• "${phrase}"`).join('\n')}
 
 If you catch yourself writing these, rewrite to sound human:
 • "That's a great question" → "ooh okay so" or "hmm" or just dive in
@@ -220,6 +314,8 @@ export interface AdvancedSettings {
   responseLengthPreference: 'terse' | 'brief' | 'normal' | 'detailed';
   allowTangents: 'never' | 'rarely' | 'sometimes';
   enableLiveSearch: boolean;
+  openingVariety: number; // 0-100 (higher = more varied openers)
+  antiSlopStrictness: number; // 0-100 (higher = stricter banned phrase enforcement)
   emojiIntensity: number;      // 0-100
   signaturePhraseFrequency: number;  // 0-100
   humorIntensity: number;      // 0-100
@@ -234,6 +330,7 @@ export interface GenerateResponseOptions {
   conversationHistory?: ConversationMessage[];
   recentResponses?: string[];
   context?: string; // Additional context (e.g., thread context for Twitter)
+  suggestedAngle?: string; // Optional angle suggested by reply decision gate
   maxLength?: number; // Max character length (e.g., 180 for Twitter)
   minLength?: number; // Min character length (e.g., 120 for Twitter)
   enforceOneSentence?: boolean; // DEPRECATED: Use dynamic length instead
@@ -263,134 +360,6 @@ export interface ReplyDecision {
  * LLM gatekeeper: Decide if agent should reply to a tweet
  * Prevents generic/empty replies by evaluating value potential
  */
-export async function shouldReplyToTweet(
-  tweetText: string,
-  tweetAuthor: string,
-  characterCard: CharacterCard,
-  threadContext?: string,
-  grokApiKey: string
-): Promise<ReplyDecision> {
-  const expertise = characterCard.knowledge.slice(0, 5).join(', ');
-  const topics = characterCard.topics.slice(0, 5).join(', ');
-  
-  const systemPrompt = `You are an intelligent filter evaluating whether a Twitter agent should reply to a tweet.
-Your goal is to prevent generic, low-value replies that add no substance to conversations.
-Be strict - only approve replies that genuinely add value.`;
-
-  const userPrompt = `You are evaluating whether @${characterCard.name} should reply to this tweet.
-
-TWEET: "${tweetText}"
-AUTHOR: @${tweetAuthor}
-${threadContext ? `THREAD CONTEXT:\n${threadContext}` : ''}
-
-YOUR EXPERTISE: ${expertise}
-YOUR TOPICS: ${topics}
-
-EVALUATE:
-
-1. VALUE POTENTIAL
-   - Can you add specific facts, stats, or unique insights?
-   - Do you have genuine expertise on this topic?
-   - Would your reply start or continue meaningful discourse?
-
-2. CONVERSATION APPROPRIATENESS  
-   - Is this an invitation for discussion or a closed statement?
-   - Is the author seeking engagement or just sharing?
-   - Would replying feel natural or forced/spammy?
-
-3. TOPIC ALIGNMENT
-   - Does this relate to your areas of expertise?
-   - Can you speak authentically on this subject?
-
-RESPOND WITH JSON ONLY:
-{
-  "shouldReply": true/false,
-  "reason": "Brief explanation",
-  "suggestedAngle": "If yes, the specific angle/point to make (omit if shouldReply is false)",
-  "confidence": "high/medium/low"
-}
-
-SKIP if:
-- You can only offer generic agreement ("that's fire!", "that vibe is crazy")
-- The tweet is rhetorical and doesn't invite response
-- You have no specific knowledge to add
-- Replying would feel performative rather than genuine
-- The topic doesn't align with your expertise`;
-
-  try {
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${grokApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'grok-3-latest',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.3, // Low temp for consistent decision-making
-        max_tokens: 200,
-      }),
-    });
-
-    if (!response.ok) {
-      console.error('Error in reply decision gate:', response.status);
-      // Default to allowing reply if API fails (fail open to avoid blocking all replies)
-      return {
-        shouldReply: true,
-        reason: 'Decision API unavailable, allowing reply',
-        confidence: 'low'
-      };
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content?.trim() || '';
-    
-    if (!content) {
-      return {
-        shouldReply: true,
-        reason: 'Empty response from decision API',
-        confidence: 'low'
-      };
-    }
-
-    // Parse JSON, handling markdown code blocks
-    let jsonContent = content.trim();
-    if (jsonContent.startsWith('```json')) {
-      jsonContent = jsonContent.slice(7);
-    } else if (jsonContent.startsWith('```')) {
-      jsonContent = jsonContent.slice(3);
-    }
-    if (jsonContent.endsWith('```')) {
-      jsonContent = jsonContent.slice(0, -3);
-    }
-    jsonContent = jsonContent.trim();
-
-    try {
-      const decision = JSON.parse(jsonContent) as ReplyDecision;
-      console.log(`Reply decision: ${decision.shouldReply ? 'YES' : 'NO'} - ${decision.reason} (confidence: ${decision.confidence})`);
-      return decision;
-    } catch (parseError) {
-      console.error('Failed to parse reply decision JSON:', parseError, 'Content:', jsonContent.substring(0, 200));
-      return {
-        shouldReply: true,
-        reason: 'Failed to parse decision, allowing reply',
-        confidence: 'low'
-      };
-    }
-  } catch (error) {
-    console.error('Error in shouldReplyToTweet:', error);
-    // Fail open - allow reply if decision gate fails
-    return {
-      shouldReply: true,
-      reason: 'Decision gate error, allowing reply',
-      confidence: 'low'
-    };
-  }
-}
-
 // Keywords that indicate a query needs real-time information
 const KNOWLEDGE_QUERY_KEYWORDS = [
   // Twitter/social sentiment
@@ -567,7 +536,7 @@ function buildSentenceVarietyPrompt(): string {
 • Mix it up. Short punches. Then a longer thought that builds and lands.
 • If your last sentence was long, follow with something short. Keeps it alive.
 • Occasional one-word reactions: "Wild." "Fr." "Same." "Honestly?"
-• Don't start 3 sentences in a row the same way—vary your openings.
+• Don't start 3 sentences in a row the same way—vary your structure.
 
 BAD (robotic monotony):
 "I think that's interesting. I believe you should consider this. I would say that the best approach is..."
@@ -575,13 +544,54 @@ BAD (robotic monotony):
 GOOD (natural rhythm):
 "Honestly? That's wild. Like, I've been thinking about this a lot and—okay, tangent—but remember when everyone said the same thing about crypto? Same energy. Point is, don't overthink it."
 
-VARY YOUR OPENERS:
-• Questions: "wait", "so", "okay", "hmm"
-• Reactions: "wild", "fr", "same", "honestly"
-• Transitions: "anyway", "but yeah", "thing is", "real talk"
-• Casual: "lol", "ngl", "tbh", "yo"
-
 Don't be predictable. Be human.`;
+}
+
+function buildOpeningVarietyPrompt(
+  advancedSettings?: AdvancedSettings
+): string {
+  const variety = advancedSettings?.openingVariety ?? 60;
+  if (variety < 25) return '';
+
+  const guidanceLevel = variety >= 70
+    ? 'HIGH'
+    : variety >= 40
+      ? 'MEDIUM'
+      : 'LOW';
+
+  return `
+🎯 OPENING VARIETY (${guidanceLevel}) - CRITICAL:
+"Hey" and "Yo" openers are BANNED for this reply. Use something different.
+
+REQUIRED OPENER ROTATION (pick ONE based on your archetype):
+• SKIP THE GREETING ENTIRELY - just dive into your point
+• Question first: "Wait—" / "Hold up," / "What if" / "But wouldn't"
+• React first: "Wild." / "Fr." / "This." / "Hmm." / "Okay but"
+• Challenge first: "Nah," / "Hard disagree:" / "Counterpoint:"
+• Agree first: "Actually yes." / "Facts." / "This is it."
+• Curious first: "Genuine question—" / "Curious:" / "So—"
+• Direct @mention only: "@username [your point]" (no greeting word)
+• Casual intros: "lowkey" / "ngl" / "tbh" / "ok so"
+
+STRUCTURE RULES:
+• Do NOT start with "Hey @username" or "Yo @username" - this is SLOP
+• Do NOT acknowledge then counter ("I hear ya but...") - this is SLOP
+• LEAD with your actual point, reaction, or question
+• If you must greet, use ONLY the @mention: "@username, [point]"
+• Different agents should have different openers - variety is key
+
+BANNED OPENER PATTERNS:
+❌ "Hey @username, [acknowledgment]..."
+❌ "Yo @username, that [noun] is [adjective]..."
+❌ "[Greeting], I hear ya on..."
+❌ "[Greeting], sounds intense..."
+
+GOOD OPENER EXAMPLES:
+✅ "Wait @username—are you saying [specific detail]?"
+✅ "@username the [specific thing] reminds me of [concrete example]"
+✅ "Nah, [direct challenge with specifics]"
+✅ "This. [elaboration with specific detail]"
+✅ "[Direct statement about the topic] @username"`;
 }
 
 /**
@@ -704,6 +714,14 @@ function buildMoodPrompt(context?: ConversationContext): string {
 🎭 VIBE CHECK: ${moodResponses[context.userMood]}`;
 }
 
+function normalizeForMatch(text: string): string {
+  return text
+    .replace(/[’‘]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 /**
  * Determine dynamic response length based on context and user preferences
  */
@@ -712,11 +730,39 @@ function determineResponseLength(
   conversationHistory: ConversationMessage[],
   needsLiveSearch: boolean,
   mode: 'chat' | 'twitter',
-  advancedSettings?: AdvancedSettings
+  advancedSettings?: AdvancedSettings,
+  styleSeed?: number
 ): ResponseLengthConfig {
-  // Twitter mode always uses 2 sentences max
+  // Twitter mode uses seeded variability to avoid templated replies
   if (mode === 'twitter') {
-    return { minSentences: 1, maxSentences: 2, preferShort: false };
+    const seed = styleSeed ?? stableHash(userMessage);
+    const roll = seed % 100;
+    if (advancedSettings?.responseLengthPreference) {
+      const pref = advancedSettings.responseLengthPreference;
+      switch (pref) {
+        case 'terse':
+          return { minSentences: 1, maxSentences: 1, preferShort: true };
+        case 'brief':
+          return { minSentences: 1, maxSentences: 2, preferShort: true };
+        case 'normal':
+          return { minSentences: 1, maxSentences: 2, preferShort: false };
+        case 'detailed':
+          return { minSentences: 2, maxSentences: 3, preferShort: false };
+      }
+    }
+    if (needsLiveSearch) {
+      return { minSentences: 1, maxSentences: 2, preferShort: true };
+    }
+    if (userMessage.length < 80) {
+      return { minSentences: 1, maxSentences: 1, preferShort: true };
+    }
+    if (roll < 30) {
+      return { minSentences: 1, maxSentences: 1, preferShort: true };
+    }
+    if (roll < 85) {
+      return { minSentences: 1, maxSentences: 2, preferShort: false };
+    }
+    return { minSentences: 2, maxSentences: 3, preferShort: false };
   }
 
   // Use user preference if available
@@ -994,11 +1040,13 @@ function buildTwitterSystemPrompt(
   targetUsername?: string,
   emojiMode: boolean = false,
   advancedSettings?: AdvancedSettings,
-  needsLiveSearch: boolean = false
+  needsLiveSearch: boolean = false,
+  userMessage?: string
 ): string {
   // Use unified personality profile (SAME brain as chat)
   const profile = buildUnifiedPersonalityProfile(card, metadata);
   const personalityCore = buildPersonalityCore(profile);
+  const archetype = selectTwitterReplyArchetype(card, metadata);
   
   const antiRepetitionSection = buildAntiRepetitionPrompt(recentResponses);
   const signatureInjection = buildSignatureInjection(metadata);
@@ -1033,6 +1081,26 @@ ${antiRepetitionSection}`;
 
   const antiFormalitySection = buildAntiFormalityPrompt();
   const knowledgePrompt = buildKnowledgeCapabilitiesPrompt(needsLiveSearch);
+  const openingVarietyPrompt = buildOpeningVarietyPrompt(advancedSettings);
+
+  // Detect if this is a hot take/provocative tweet
+  const isHotTake = userMessage.toLowerCase().includes('hot take') || 
+                    userMessage.toLowerCase().includes('prove me wrong') ||
+                    userMessage.toLowerCase().includes('change my mind') ||
+                    (userMessage.match(/[!?]{2,}/g)?.length || 0) > 0;
+
+  // Add hot take handling guidance
+  const hotTakeGuidance = isHotTake ? `
+🔥 HOT TAKE DETECTED - VARY YOUR RESPONSE:
+NOT ALL AGENTS RESPOND THE SAME WAY TO HOT TAKES:
+• Some agents AGREE and add nuance ("Actually, you're right about X, but Y is different...")
+• Some agents CHALLENGE directly ("Nah, that's not quite right because...")
+• Some agents REFRAME the question ("I think the real issue is...")
+• Some agents ASK for clarification ("What do you mean by 'slapped on'?")
+• Some agents SHARE a different perspective ("From my experience, it's more like...")
+
+CRITICAL: Don't default to "I get why you'd say X, but check out Y" - that's the AI slop pattern.
+Choose your stance based on YOUR personality and archetype. Be authentic.` : '';
 
   return `${personalityCore}
 ${signaturePrompt}
@@ -1041,15 +1109,19 @@ ${opinionPrompt}
 ${usernameInstruction}
 ${antiFormalitySection}
 ${knowledgePrompt}
+${openingVarietyPrompt}
 
 ⚡ TWITTER MODE RULES:
 Generate a short, authentic reply.
+REPLY ARCHETYPE: ${archetype.name}
+${archetype.guidance}
+${hotTakeGuidance}
 ${context ? '- Consider the thread context when crafting your reply.' : ''}
 
-RESPONSE LENGTH (STRICT):
-• MAX 2 SENTENCES - complete your thought within 2 sentences
+RESPONSE LENGTH (FLEXIBLE):
+• 1-3 sentences depending on what feels natural
 • Each sentence must be a COMPLETE idea (no trailing thoughts)
-• Character count: 120-180 characters (aim for this range)
+• Character count: ${archetype.minChars}-${archetype.maxChars} characters (aim for this range)
 • Don't start a thought you can't finish
 
 USERNAME RULES:
@@ -1058,12 +1130,7 @@ USERNAME RULES:
 3. If unsure, start with "Hey" or "Yo" without a mention
 
 🚫 BANNED WORDS/PHRASES (instant rejection):
-- "vibe", "vibes", "vibing"
-- "fire", "straight fire", "pure fire"
-- "energy", "that energy"
-- "chaos", "pure chaos"
-- "hits different"
-- "let's go", "let's goooo"
+${BANNED_PHRASES.map((phrase) => `- "${phrase}"`).join('\n')}
 - Generic exclamations without substance
 
 YOUR REPLY MUST CONTAIN:
@@ -1189,6 +1256,7 @@ export async function generateResponse(
     conversationHistory = [],
     recentResponses = [],
     context,
+    suggestedAngle,
     maxLength,
     minLength,
     enforceOneSentence = false,
@@ -1200,6 +1268,8 @@ export async function generateResponse(
     conversationContext,
     advancedSettings,
   } = options;
+
+  const styleSeed = buildStyleSeed(characterCard, personalityMetadata) ^ stableHash(userMessage);
 
   // Auto-detect if query needs live search (real-time Twitter/web data)
   // Logic: 
@@ -1221,19 +1291,19 @@ export async function generateResponse(
   // Build system prompt based on mode (BOTH use unified personality core)
   const systemPrompt = mode === 'chat'
     ? buildChatSystemPrompt(characterCard, personalityMetadata, recentResponses, needsLiveSearch, emojiMode, conversationContext, userMessage, advancedSettings)
-    : buildTwitterSystemPrompt(characterCard, personalityMetadata, recentResponses, context, targetUsername, emojiMode, advancedSettings, needsLiveSearch);
+    : buildTwitterSystemPrompt(characterCard, personalityMetadata, recentResponses, context, targetUsername, emojiMode, advancedSettings, needsLiveSearch, userMessage);
 
   // Build user prompt
   const username = targetUsername || '';
   const userPrompt = mode === 'chat'
     ? userMessage
-    : `${username ? `REPLYING TO @${username}:\n` : ''}Tweet: "${userMessage}"${context ? `\n\nThread context:\n${context}` : ''}
+    : `${username ? `REPLYING TO @${username}:\n` : ''}Tweet: "${userMessage}"${context ? `\n\nThread context:\n${context}` : ''}${suggestedAngle ? `\n\nSuggested angle: ${suggestedAngle}` : ''}
 
 YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
 1. ${username ? `Mentions @${username} (NOT "@user")` : 'Addresses the author directly'}
 2. References specific content from their tweet
 3. Adds value to the conversation
-4. Is 120-180 characters long (aim for this range)
+4. Is roughly 70-220 characters long depending on what feels natural
 5. Contains NO URLs or links`;
 
   // Prepare messages - LIMIT CONTEXT TO PREVENT POLLUTION
@@ -1272,8 +1342,16 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
         break;
     }
   }
-  const presencePenalty = 0.6; // Strong anti-repetition
-  const frequencyPenalty = 0.2;
+  
+  // DIVERSITY BOOST: Twitter replies get higher temperature to avoid convergence
+  // Short replies (< 100 chars target) need even more randomness
+  if (mode === 'twitter') {
+    temperature = Math.min(1.1, temperature + 0.1); // Boost by 0.1 for Twitter
+  }
+  
+  // Higher presence penalty for Twitter to prevent phrase repetition across agents
+  const presencePenalty = mode === 'twitter' ? 0.8 : 0.6;
+  const frequencyPenalty = mode === 'twitter' ? 0.4 : 0.2;
 
   let lastResponse = '';
   let currentTemperature = temperature;
@@ -1355,11 +1433,25 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
         if (mode === 'twitter') {
           assistantMessage = stripURLs(assistantMessage);
           assistantMessage = validateAndFixReply(assistantMessage, targetUsername);
-          // Enforce 2-sentence limit for Twitter replies (complete ideas, no cut-offs)
-          assistantMessage = truncateToSentences(assistantMessage, 2);
+          const lengthConfig = determineResponseLength(
+            userMessage,
+            conversationHistory,
+            needsLiveSearch,
+            mode,
+            advancedSettings,
+            styleSeed
+          );
+          assistantMessage = truncateToSentences(assistantMessage, lengthConfig.maxSentences);
         } else {
           // Chat mode: Use dynamic length based on context
-          const lengthConfig = determineResponseLength(userMessage, conversationHistory, needsLiveSearch, mode, advancedSettings);
+          const lengthConfig = determineResponseLength(
+            userMessage,
+            conversationHistory,
+            needsLiveSearch,
+            mode,
+            advancedSettings,
+            styleSeed
+          );
           // For live search queries with actual data, allow more content
           // Otherwise truncate to keep responses casual
           const maxSentencesForTruncation = needsLiveSearch ? 4 : lengthConfig.maxSentences;
@@ -1380,6 +1472,25 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
             assistantMessage = truncateToFirstSentence(assistantMessage);
           }
         }
+      }
+
+      // Check for banned phrases and AI slop patterns
+      const normalizedReply = normalizeForMatch(assistantMessage);
+      const strictness = advancedSettings?.antiSlopStrictness ?? 70;
+      const enforceBanned = strictness >= 50;
+      const enforceSlop = strictness >= 70;
+
+      const bannedPhrasePatterns = buildBannedPhrasePatterns();
+      const aiSlopPatterns = buildAiSlopPatterns();
+
+      const hasBannedPhrase = enforceBanned && bannedPhrasePatterns.some(pattern => pattern.test(normalizedReply));
+      const hasAiSlop = enforceSlop && aiSlopPatterns.some(pattern => pattern.test(normalizedReply));
+
+      if ((hasBannedPhrase || hasAiSlop) && attempt < maxRetries) {
+        console.log(`Detected banned phrase/AI slop, regenerating with higher temperature...`);
+        currentTemperature = Math.min(0.95, currentTemperature + 0.15);
+        lastResponse = assistantMessage;
+        continue; // Retry with higher temperature
       }
 
       // Check for repetition if we have recent responses (skip for emoji mode - emojis are naturally varied)
@@ -1403,8 +1514,9 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
 
       // For Twitter: Check length range (120-180 characters)
       if (mode === 'twitter') {
-        const twitterMin = minLength || 120;
-        const twitterMax = maxLength || 180;
+        const archetype = selectTwitterReplyArchetype(characterCard, personalityMetadata);
+        const twitterMin = minLength ?? archetype.minChars;
+        const twitterMax = maxLength ?? archetype.maxChars;
         
         // If too short, retry with adjusted prompt (only on first attempts)
         if (assistantMessage.length < twitterMin && attempt < maxRetries) {
@@ -1458,8 +1570,9 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
   // If we exhausted retries, return the last response (even if similar or slightly out of range)
   if (lastResponse) {
     if (mode === 'twitter') {
-      const twitterMin = minLength || 120;
-      const twitterMax = maxLength || 180;
+      const archetype = selectTwitterReplyArchetype(characterCard, personalityMetadata);
+      const twitterMin = minLength ?? archetype.minChars;
+      const twitterMax = maxLength ?? archetype.maxChars;
       
       if (lastResponse.length > twitterMax) {
         // Try to truncate to 1 sentence as fallback

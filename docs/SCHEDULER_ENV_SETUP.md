@@ -52,20 +52,22 @@ The Edge Function needs this to bypass RLS and update posts. Usually auto-provid
 
 ## Vercel Configuration
 
-Your `vercel.json` should now include:
+**Note:** Post execution is handled by Supabase pg_cron (every 5 minutes), not Vercel cron.
+
+Your `vercel.json` only needs the agent discovery cron:
 
 ```json
 {
   "crons": [
     {
-      "path": "/api/cron/process-posts",
-      "schedule": "*/5 * * * *"
+      "path": "/api/cron/process-agent",
+      "schedule": "0 9 * * *"
     }
   ]
 }
 ```
 
-This runs the scheduler every 5 minutes.
+Post execution runs automatically via pg_cron every 5 minutes (configured in Supabase migrations).
 
 ---
 
@@ -116,10 +118,13 @@ Required secrets for `process-scheduled-posts`:
 
 ### Manual Test
 ```bash
-# Test the cron endpoint manually (replace with your values)
-curl -X POST "https://your-app.vercel.app/api/cron/process-posts" \
-  -H "Authorization: Bearer YOUR_CRON_SECRET"
+# Test the Edge Function directly (replace with your values)
+curl -X POST "https://YOUR_PROJECT.supabase.co/functions/v1/process-scheduled-posts" \
+  -H "Authorization: Bearer YOUR_CRON_SECRET" \
+  -H "Content-Type: application/json"
 ```
+
+**Note:** The Vercel API route wrapper has been removed. Use the Edge Function directly for manual testing.
 
 ### Vercel Cron Logs
 - Go to Vercel Dashboard → Your Project → Logs

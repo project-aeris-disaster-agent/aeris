@@ -5,6 +5,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { checkRateLimit, RATE_LIMITS, rateLimitResponse } from '../_shared/rateLimit.ts';
 import { validateEmojiResponse } from '../_shared/generateResponse.ts';
+import { BANNED_PHRASES, findBannedPhrases } from '../_shared/bannedPhrases.ts';
 
 const SUPABASE_URL =
   Deno.env.get('PROJECT_URL') ??
@@ -206,6 +207,9 @@ CRITICAL URL RULES - MUST FOLLOW:
 - If you want to direct users somewhere, say "check our updates" or "see our latest" without adding a URL
 - NEVER guess or hallucinate domain names - if unsure, omit the link entirely
 
+🚫 BANNED PHRASES (instant rejection):
+${BANNED_PHRASES.map((phrase) => `- "${phrase}"`).join('\n')}
+
 Generate a social media post (50-280 characters) that:
 - Matches your authentic voice from the examples
 - ${custom_tags && custom_tags.length > 0 
@@ -226,73 +230,95 @@ Return ONLY the post text, nothing else.`;
       throw new Error('GROK_API_KEY not configured');
     }
 
-    const grokResponse = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${grokApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'grok-4-latest',
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt,
-          },
-          {
-            role: 'user',
-            content: custom_tags && custom_tags.length > 0
-              ? `Write a post about these topics: ${custom_tags.join(', ')}. Make it engaging and true to my voice.`
-              : 'Write a post that I would naturally share on social media right now.',
-          },
-        ],
-        temperature: 0.8,
-        max_tokens: 150,
-      }),
-    });
+    const maxAttempts = 3;
+    let generatedPost = '';
+    let temperature = 0.8;
 
-    if (!grokResponse.ok) {
-      const errorData = await grokResponse.text();
-      console.error('Grok API error:', errorData);
-      throw new Error(`Grok API error: ${grokResponse.status}`);
-    }
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const grokResponse = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${grokApiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'grok-4-latest',
+          messages: [
+            {
+              role: 'system',
+              content: systemPrompt,
+            },
+            {
+              role: 'user',
+              content: custom_tags && custom_tags.length > 0
+                ? `Write a post about these topics: ${custom_tags.join(', ')}. Make it engaging and true to my voice.`
+                : 'Write a post that I would naturally share on social media right now.',
+            },
+          ],
+          temperature,
+          max_tokens: 150,
+        }),
+      });
 
-    const grokData = await grokResponse.json();
-    let generatedPost = grokData.choices?.[0]?.message?.content?.trim() || '';
-
-    if (!generatedPost) {
-      throw new Error('Failed to generate post content');
-    }
-
-    // EMOJI MODE: Validate and enforce emoji-only response
-    if (emojiMode) {
-      const validation = validateEmojiResponse(generatedPost);
-      if (!validation.isValid) {
-        console.warn(`Emoji validation failed: ${validation.error}`);
-        // Fallback to neutral emoji if validation fails
-        generatedPost = '🤖';
-      } else {
-        generatedPost = validation.cleaned;
+      if (!grokResponse.ok) {
+        const errorData = await grokResponse.text();
+        console.error('Grok API error:', errorData);
+        throw new Error(`Grok API error: ${grokResponse.status}`);
       }
-    } else {
+
+      const grokData = await grokResponse.json();
+      generatedPost = grokData.choices?.[0]?.message?.content?.trim() || '';
+
+      if (!generatedPost) {
+        if (attempt === maxAttempts) {
+          throw new Error('Failed to generate post content');
+        }
+        temperature = Math.min(0.95, temperature + 0.1);
+        continue;
+      }
+
+      // EMOJI MODE: Validate and enforce emoji-only response
+      if (emojiMode) {
+        const validation = validateEmojiResponse(generatedPost);
+        if (!validation.isValid) {
+          console.warn(`Emoji validation failed: ${validation.error}`);
+          // Fallback to neutral emoji if validation fails
+          generatedPost = '🤖';
+        } else {
+          generatedPost = validation.cleaned;
+        }
+        break;
+      }
+
       // Normal mode: CRITICAL: Strip any fabricated URLs from the generated content
       // This catches cases where the AI ignores the prompt instructions
       const urlPattern = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(com|net|org|io|co|xyz|gg|dev|app|link|me|info|biz|us|uk|tv|fm|ly|to|cc|sh|be|ai|vc|gl|ws|so|club|online|site|tech|space|world|zone|live|digital|network|page|pro|work)[^\s]*/gi;
       const placeholderPattern = /\[link\]|\[url\]|yourlinkhere|yourlink|linkhere|checkitout\.com|example\.com|yoursite\.[a-z]+/gi;
-      
+
       // Remove URLs and placeholder patterns
       const originalPost = generatedPost;
       generatedPost = generatedPost.replace(urlPattern, '').replace(placeholderPattern, '');
-      
+
       // Clean up any double spaces or trailing/leading spaces left by URL removal
       generatedPost = generatedPost.replace(/\s{2,}/g, ' ').trim();
-      
+
       // Also remove orphaned punctuation before removed URLs (e.g., "Check it out: " becomes "Check it out")
       generatedPost = generatedPost.replace(/:\s*$/, '').replace(/\s+([.!?])$/, '$1').trim();
-      
+
       if (originalPost !== generatedPost) {
         console.log(`⚠️ URL(s) stripped from generated post. Original: "${originalPost.substring(0, 100)}..."`);
       }
+
+      const bannedHits = findBannedPhrases(generatedPost);
+      if (bannedHits.length > 0) {
+        console.warn(`⚠️ Banned phrases detected in post: ${bannedHits.join(', ')}`);
+        if (attempt < maxAttempts) {
+          temperature = Math.min(0.95, temperature + 0.1);
+          continue;
+        }
+      }
+
+      break;
     }
 
     // Post-generation validation (skip for emoji mode)

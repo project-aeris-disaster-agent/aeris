@@ -14,6 +14,8 @@ export interface AdvancedSettings {
   responseLengthPreference: 'terse' | 'brief' | 'normal' | 'detailed';
   allowTangents: 'never' | 'rarely' | 'sometimes';
   enableLiveSearch: boolean;
+  openingVariety: number; // How much to vary reply openers (0-100)
+  antiSlopStrictness: number; // How aggressively to avoid banned phrases (0-100)
   
   // Expression intensity (0-100, scales character card traits)
   emojiIntensity: number;      // How often emojis appear (uses character's emoji patterns)
@@ -29,6 +31,8 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
   responseLengthPreference: 'brief',
   allowTangents: 'rarely',
   enableLiveSearch: true,
+  openingVariety: 60,
+  antiSlopStrictness: 70,
   emojiIntensity: 50,
   signaturePhraseFrequency: 30,
   humorIntensity: 50,
