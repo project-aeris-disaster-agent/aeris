@@ -1029,6 +1029,67 @@ export function ConsoleLogs({ isOpen, onClose, userId, twitterAccessToken }: Con
                       </div>
                     </div>
 
+                    {/* Anti-Slop & Diversity Section */}
+                    <div className="space-y-3">
+                      <h4 className="text-white/70 text-sm font-medium flex items-center gap-2">
+                        <Zap className="w-4 h-4" />
+                        Anti-Slop & Diversity
+                      </h4>
+                      <p className="text-white/30 text-xs -mt-1">
+                        Controls to prevent generic AI-sounding responses.
+                      </p>
+
+                      {/* Anti-Slop Strictness Slider */}
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <h5 className="text-white text-sm font-medium">Anti-Slop Strictness</h5>
+                            <p className="text-white/40 text-xs">How aggressively to avoid generic AI phrases</p>
+                          </div>
+                          <span className="text-green-400 text-xs font-medium">{advancedSettings.antiSlopStrictness}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          step="5"
+                          value={advancedSettings.antiSlopStrictness}
+                          onChange={(e) => handleUpdateAdvancedSetting('antiSlopStrictness', parseInt(e.target.value))}
+                          disabled={isLoadingSettings}
+                          className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-green-500"
+                        />
+                        <div className="flex justify-between text-white/30 text-xs mt-1">
+                          <span>Relaxed</span>
+                          <span>Strict</span>
+                        </div>
+                      </div>
+
+                      {/* Opening Variety Slider */}
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <h5 className="text-white text-sm font-medium">Opening Variety</h5>
+                            <p className="text-white/40 text-xs">How much to vary how replies start</p>
+                          </div>
+                          <span className="text-purple-400 text-xs font-medium">{advancedSettings.openingVariety}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          step="5"
+                          value={advancedSettings.openingVariety}
+                          onChange={(e) => handleUpdateAdvancedSetting('openingVariety', parseInt(e.target.value))}
+                          disabled={isLoadingSettings}
+                          className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        />
+                        <div className="flex justify-between text-white/30 text-xs mt-1">
+                          <span>Same openers</span>
+                          <span>Varied openers</span>
+                        </div>
+                      </div>
+                    </div>
+
                     {isLoadingSettings && (
                       <div className="flex items-center justify-center gap-2 text-white/50 text-xs py-2">
                         <Loader2 className="w-3 h-3 animate-spin" />

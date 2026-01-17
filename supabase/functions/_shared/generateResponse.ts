@@ -183,75 +183,191 @@ function buildStyleSeed(card: CharacterCard, metadata?: PersonalityMetadata): nu
   return stableHash(seedInput || card.name);
 }
 
-function selectTwitterReplyArchetype(
-  card: CharacterCard,
-  metadata?: PersonalityMetadata
-): TwitterReplyArchetype {
-  const seed = buildStyleSeed(card, metadata);
-  const archetypes: TwitterReplyArchetype[] = [
-    {
-      name: 'Analytical',
-      guidance: `STRUCTURE: Lead with fact/insight → brief takeaway. NO greeting.
+// Archetype definitions
+const TWITTER_ARCHETYPES: TwitterReplyArchetype[] = [
+  {
+    name: 'Analytical',
+    guidance: `STRUCTURE: Lead with fact/insight → brief takeaway. NO greeting.
 OPENER: Skip greeting entirely. Start with data, stat, or observation.
 EXAMPLE STARTS: "The data shows..." / "Actually, [specific stat]..." / "[Concrete observation]—"
 BANNED: "Hey/Yo", acknowledgments like "I hear ya", filler phrases.
 For hot takes: Agree with data ("The numbers back this up—") or challenge with specifics ("That misses [specific thing] because...")`,
-      minChars: 90,
-      maxChars: 210,
-      minSentences: 1,
-      maxSentences: 2,
-    },
-    {
-      name: 'Conversational',
-      guidance: `STRUCTURE: Quick reaction → specific point or question. Feels like mid-thread.
+    minChars: 90,
+    maxChars: 210,
+    minSentences: 1,
+    maxSentences: 2,
+  },
+  {
+    name: 'Conversational',
+    guidance: `STRUCTURE: Quick reaction → specific point or question. Feels like mid-thread.
 OPENER: Use reactions NOT greetings. Try "Wait—" / "Hmm" / "Ok but" / "Fr" / "This." / or just @mention.
 EXAMPLE STARTS: "Wait @username—" / "Ngl" / "Lowkey" / "@username ok but"
 BANNED: "Hey @username", "Yo @username", "I hear ya", "sounds intense".
 For hot takes: React then engage ("Fr tho—but what about [specific]?" or "Wait, isn't that also true for [X]?")`,
-      minChars: 70,
-      maxChars: 190,
-      minSentences: 1,
-      maxSentences: 3,
-    },
-    {
-      name: 'Contrarian',
-      guidance: `STRUCTURE: Disagreement/reframe FIRST → supporting point. No acknowledgment.
+    minChars: 70,
+    maxChars: 190,
+    minSentences: 1,
+    maxSentences: 3,
+  },
+  {
+    name: 'Contrarian',
+    guidance: `STRUCTURE: Disagreement/reframe FIRST → supporting point. No acknowledgment.
 OPENER: Lead with challenge. "Nah," / "Hard disagree:" / "Counterpoint:" / "Actually no—"
 EXAMPLE STARTS: "Nah, that misses..." / "The real issue is..." / "I'd push back on that—"
 BANNED: "I hear ya but", "Valid point but", "Hey/Yo", any acknowledgment before disagreeing.
 For hot takes: Challenge directly without softening ("That's wrong because [specific]" not "I get it but...")`,
-      minChars: 90,
-      maxChars: 220,
-      minSentences: 1,
-      maxSentences: 2,
-    },
-    {
-      name: 'Storyteller',
-      guidance: `STRUCTURE: Micro-anecdote (1 line) → connection to their point → insight.
+    minChars: 90,
+    maxChars: 220,
+    minSentences: 1,
+    maxSentences: 2,
+  },
+  {
+    name: 'Storyteller',
+    guidance: `STRUCTURE: Micro-anecdote (1 line) → connection to their point → insight.
 OPENER: Start with the story/memory. "Reminds me of..." / "Same thing happened with..." / "This is like when..."
 EXAMPLE STARTS: "This reminds me of [specific thing]—" / "Same energy as when [concrete example]..."
 BANNED: "Hey/Yo", generic reactions, acknowledgments before story.
 For hot takes: Share a related experience that either supports or challenges their take.`,
-      minChars: 110,
-      maxChars: 230,
-      minSentences: 2,
-      maxSentences: 3,
-    },
-    {
-      name: 'Punchy',
-      guidance: `STRUCTURE: Sharp one-liner OR reaction + one specific detail. Maximum impact, minimum words.
+    minChars: 110,
+    maxChars: 230,
+    minSentences: 2,
+    maxSentences: 3,
+  },
+  {
+    name: 'Punchy',
+    guidance: `STRUCTURE: Sharp one-liner OR reaction + one specific detail. Maximum impact, minimum words.
 OPENER: Reaction word/phrase only. "Wild." / "This." / "Fr." / "Nah." / "@mention" alone.
 EXAMPLE STARTS: "Wild." / "This is it." / "Nah." / "Facts." / "@username 100%"
 BANNED: "Hey/Yo @username", multi-sentence acknowledgments, filler phrases, explanations.
 For hot takes: One-word stance + brief point ("Hard disagree. [Specific reason]" or "Facts. [Brief elaboration]")`,
-      minChars: 60,
-      maxChars: 160,
-      minSentences: 1,
-      maxSentences: 2,
-    },
-  ];
+    minChars: 60,
+    maxChars: 160,
+    minSentences: 1,
+    maxSentences: 2,
+  },
+];
 
-  return archetypes[seed % archetypes.length];
+/**
+ * Calculate personality-weighted archetype scores
+ * Higher scores = stronger match to character card traits
+ */
+function calculateArchetypeWeights(
+  card: CharacterCard,
+  metadata?: PersonalityMetadata,
+  tweetContent?: string
+): Record<string, number> {
+  const adjectives = (card.adjectives || []).map(a => a.toLowerCase());
+  const allStyle = (card.style?.all || []).map(s => s.toLowerCase());
+  const chatStyle = (card.style?.chat || []).map(s => s.toLowerCase());
+  const postStyle = (card.style?.post || []).map(s => s.toLowerCase());
+  const allTraits = [...adjectives, ...allStyle, ...chatStyle, ...postStyle];
+  
+  const weights: Record<string, number> = {
+    'Analytical': 1,
+    'Conversational': 1,
+    'Contrarian': 1,
+    'Storyteller': 1,
+    'Punchy': 1,
+  };
+  
+  // Analytical: data-driven, technical, robotic, analytical, insightful
+  if (allTraits.some(t => ['analytical', 'technical', 'robotic', 'data-driven', 'insightful', 'strategic'].includes(t))) {
+    weights['Analytical'] += 3;
+  }
+  if (allTraits.some(t => t.includes('tech') || t.includes('robot') || t.includes('logic'))) {
+    weights['Analytical'] += 2;
+  }
+  
+  // Conversational: friendly, casual, warm, engaging, supportive
+  if (allTraits.some(t => ['friendly', 'casual', 'warm', 'engaging', 'supportive', 'conversational'].includes(t))) {
+    weights['Conversational'] += 3;
+  }
+  if (allTraits.some(t => t.includes('friend') || t.includes('human') || t.includes('casual'))) {
+    weights['Conversational'] += 2;
+  }
+  
+  // Contrarian: provocative, sarcastic, bold, irreverent, challenger, douchebag
+  if (allTraits.some(t => ['provocative', 'sarcastic', 'bold', 'irreverent', 'contrarian', 'douchebag', 'snarky'].includes(t))) {
+    weights['Contrarian'] += 4; // Strong weight for explicitly provocative personalities
+  }
+  if (metadata?.opinionStyle === 'provocative' || metadata?.opinionStyle === 'strong') {
+    weights['Contrarian'] += 2;
+  }
+  
+  // Storyteller: lore-heavy characters, narrative style
+  if ((card.lore?.length || 0) > 2) {
+    weights['Storyteller'] += 2;
+  }
+  if (allTraits.some(t => ['storyteller', 'narrative', 'creative', 'imaginative'].includes(t))) {
+    weights['Storyteller'] += 2;
+  }
+  
+  // Punchy: direct, terse, concise, bold, short
+  if (allTraits.some(t => ['direct', 'terse', 'concise', 'punchy', 'brief'].includes(t))) {
+    weights['Punchy'] += 3;
+  }
+  if (allTraits.some(t => t.includes('short') || t.includes('direct') || t.includes('impact'))) {
+    weights['Punchy'] += 2;
+  }
+  
+  // Tweet content context boosting
+  if (tweetContent) {
+    const lowerTweet = tweetContent.toLowerCase();
+    
+    // Hot takes favor contrarian
+    if (lowerTweet.includes('hot take') || lowerTweet.includes('change my mind') || lowerTweet.includes('prove me wrong')) {
+      weights['Contrarian'] += 3;
+    }
+    
+    // Questions favor conversational
+    if (tweetContent.includes('?')) {
+      weights['Conversational'] += 2;
+    }
+    
+    // Breaking news/announcements favor analytical
+    if (lowerTweet.includes('breaking') || lowerTweet.includes('announces') || lowerTweet.includes('partnership')) {
+      weights['Analytical'] += 2;
+    }
+    
+    // Short tweets favor punchy responses
+    if (tweetContent.length < 100) {
+      weights['Punchy'] += 2;
+    }
+  }
+  
+  return weights;
+}
+
+/**
+ * Select archetype using weighted random selection
+ * Characters with matching traits have higher probability of their preferred archetype
+ */
+function selectTwitterReplyArchetype(
+  card: CharacterCard,
+  metadata?: PersonalityMetadata,
+  tweetContent?: string
+): TwitterReplyArchetype {
+  const weights = calculateArchetypeWeights(card, metadata, tweetContent);
+  
+  // Calculate total weight
+  const totalWeight = Object.values(weights).reduce((sum, w) => sum + w, 0);
+  
+  // Add randomness based on current time to ensure different agents get different archetypes
+  const randomSeed = Date.now() % 1000 + stableHash(card.name);
+  const randomValue = (randomSeed % 100) / 100 * totalWeight;
+  
+  // Weighted random selection
+  let cumulative = 0;
+  for (const archetype of TWITTER_ARCHETYPES) {
+    cumulative += weights[archetype.name] || 1;
+    if (randomValue < cumulative) {
+      console.log(`🎭 Selected archetype for ${card.name}: ${archetype.name} (weights: ${JSON.stringify(weights)})`);
+      return archetype;
+    }
+  }
+  
+  // Fallback to first archetype
+  return TWITTER_ARCHETYPES[0];
 }
 
 /**
@@ -1046,7 +1162,8 @@ function buildTwitterSystemPrompt(
   // Use unified personality profile (SAME brain as chat)
   const profile = buildUnifiedPersonalityProfile(card, metadata);
   const personalityCore = buildPersonalityCore(profile);
-  const archetype = selectTwitterReplyArchetype(card, metadata);
+  // Pass userMessage for context-aware archetype selection (hot takes, questions, etc.)
+  const archetype = selectTwitterReplyArchetype(card, metadata, userMessage);
   
   const antiRepetitionSection = buildAntiRepetitionPrompt(recentResponses);
   const signatureInjection = buildSignatureInjection(metadata);
@@ -1343,10 +1460,32 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
     }
   }
   
+  // PERSONALITY-SPECIFIC TEMPERATURE ADJUSTMENT
+  // Characters with certain traits benefit from different temperature ranges
+  const adjectives = (characterCard.adjectives || []).map(a => a.toLowerCase());
+  const allStyle = [
+    ...(characterCard.style?.all || []),
+    ...(characterCard.style?.chat || []),
+    ...(characterCard.style?.post || [])
+  ].map(s => s.toLowerCase());
+  const allTraits = [...adjectives, ...allStyle];
+  
+  // Provocative/sarcastic characters need higher temperature for unpredictability
+  if (allTraits.some(t => ['provocative', 'sarcastic', 'irreverent', 'unpredictable', 'bold', 'douchebag'].includes(t))) {
+    temperature = Math.min(1.15, temperature + 0.1);
+    console.log(`🌡️ Boosted temperature for provocative personality: ${temperature}`);
+  }
+  
+  // Robotic/analytical characters need lower temperature for consistency
+  if (allTraits.some(t => ['robotic', 'analytical', 'consistent', 'tech-oriented', 'direct'].includes(t))) {
+    temperature = Math.max(0.6, temperature - 0.1);
+    console.log(`🌡️ Lowered temperature for robotic/analytical personality: ${temperature}`);
+  }
+  
   // DIVERSITY BOOST: Twitter replies get higher temperature to avoid convergence
   // Short replies (< 100 chars target) need even more randomness
   if (mode === 'twitter') {
-    temperature = Math.min(1.1, temperature + 0.1); // Boost by 0.1 for Twitter
+    temperature = Math.min(1.15, temperature + 0.1); // Boost by 0.1 for Twitter
   }
   
   // Higher presence penalty for Twitter to prevent phrase repetition across agents
@@ -1514,7 +1653,7 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
 
       // For Twitter: Check length range (120-180 characters)
       if (mode === 'twitter') {
-        const archetype = selectTwitterReplyArchetype(characterCard, personalityMetadata);
+        const archetype = selectTwitterReplyArchetype(characterCard, personalityMetadata, userMessage);
         const twitterMin = minLength ?? archetype.minChars;
         const twitterMax = maxLength ?? archetype.maxChars;
         
@@ -1570,7 +1709,7 @@ YOUR TASK: Write a reply ${username ? `to @${username}` : ''} that:
   // If we exhausted retries, return the last response (even if similar or slightly out of range)
   if (lastResponse) {
     if (mode === 'twitter') {
-      const archetype = selectTwitterReplyArchetype(characterCard, personalityMetadata);
+      const archetype = selectTwitterReplyArchetype(characterCard, personalityMetadata, userMessage);
       const twitterMin = minLength ?? archetype.minChars;
       const twitterMax = maxLength ?? archetype.maxChars;
       

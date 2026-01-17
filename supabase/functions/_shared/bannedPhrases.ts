@@ -26,7 +26,7 @@ export const BANNED_PHRASES = [
   'to summarize',
   'feel free to',
   'i hope this helps',
-  // NEW: Soft-ban phrases that cause convergence
+  // Soft-ban phrases that cause convergence
   'sounds intense',
   'sounds crazy',
   'sounds wild',
@@ -34,6 +34,8 @@ export const BANNED_PHRASES = [
   'sounds dope',
   'sounds sick',
   'sounds like a',  // Catches "sounds like a proper brain melt" etc.
+  'sounds huge',
+  'sounds epic',
   'i hear ya',
   'i hear you',
   'i feel that',
@@ -50,23 +52,55 @@ export const BANNED_PHRASES = [
   'the thing is',
   'the reality is',
   'bottom line',
-  // NEW: Additional convergence phrases from testing
+  // Additional convergence phrases from testing
   'is wild',
   'is unreal',
   'is insane',
+  'is huge',
   'pushing boundaries',
   'on another level',
+  // NEW: Cross-agent similarity patterns (Jan 2026)
+  'bet you',
+  "bet you've",
+  'bet that',
+  'bet it',
+  'props to',
+  'props for',
+  'wild stuff',
+  'wild ideas',
+  'cooked up',
+  'ideas brewing',
+  'gotta love',
+  'gotta say',
+  'gotta hand it to',
+  'absolute chaos',
+  'total chaos',
+  'brain melt',
+  'spawning',         // Overused in context of "ideas spawning"
+  'game-changer',
+  'game changer',
+  'next level',
+  'is epic',
 ];
 
 export const AI_SLOP_PHRASES = [
   "i hear what you're saying but",
   "i see where you're coming from but",
-  // NEW: Common AI acknowledgment patterns
+  // Common AI acknowledgment patterns
   "i totally get that",
   "i completely understand",
   "that makes sense but",
   "valid point but",
   "fair point but",
+  // NEW: Generic opener slop (Jan 2026)
+  "i see why you'd",
+  "i get why you'd",
+  "gotta push back",
+  "imagine the chaos",
+  "imagine the possibilities",
+  "this could change",
+  "this is huge",
+  "this is massive",
 ];
 
 function escapeRegex(value: string): string {

@@ -31,10 +31,10 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
   responseLengthPreference: 'brief',
   allowTangents: 'rarely',
   enableLiveSearch: true,
-  openingVariety: 60,
-  antiSlopStrictness: 70,
+  openingVariety: 75,           // Increased from 60 for more varied openers
+  antiSlopStrictness: 85,       // Increased from 70 for stricter slop prevention
   emojiIntensity: 50,
-  signaturePhraseFrequency: 30,
+  signaturePhraseFrequency: 60, // Increased from 30 to enforce personality expression
   humorIntensity: 50,
   opinionStrength: 'normal',
   creativityLevel: 'balanced',

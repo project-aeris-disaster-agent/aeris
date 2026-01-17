@@ -4,32 +4,32 @@
 
 import { findBannedPhrases, BANNED_PHRASES } from '../supabase/functions/_shared/bannedPhrases.ts';
 
-// Live responses from the edge function test
+// Live responses from the edge function test (AFTER FIXES)
 const LIVE_RESPONSES = [
   {
     agent: 'newprontera',
     handle: '@newprontera',
-    response: '@LordSedano, that 8-hour coding marathon sounds intense! The idea of Opus and GPT duking it out in @hyperscapeai is epic—imagine the AI trash talk while they battle.'
+    response: '@LordSedano, an Opus vs GPT showdown in @hyperscapeai sounds like the ultimate AI battle! Considering Opus edges out in reasoning tasks while GPT dominates coding speed, it\'d be a close fight.'
   },
   {
     agent: 'ArcherPerezz',
     handle: '@ArcherPerezz',
-    response: 'Nah, @LordSedano, an Opus vs. GPT showdown in @hyperscapeai would be absolute chaos!'
+    response: 'Nah, @LordSedano, an Opus vs. GPT showdown in @hyperscapeai would be pure chaos in the best way!'
   },
   {
     agent: '_langtuNFT',
     handle: '@_langtuNFT',
-    response: '@LordSedano, that 8-hour coding session sounds intense! I\'m totally down for seeing Opus and GPT battle it out in @hyperscapeai—imagine the chaos of AI duking it out in a virtual arena.'
+    response: '@LordSedano, an 8-hour coding session sounds intense! I\'m totally down for seeing Opus and GPT battle it out in @hyperscapeai.'
   },
   {
     agent: 'LordSedano',
     handle: '@LordSedano',
-    response: '@LordSedano, an 8-hour coding sesh sounding like a total brain melt!'
+    response: '@LordSedano, that 8-hour coding sesh with @shawmakesmagic sounds intense!'
   },
   {
     agent: 'agent_hellracer',
     handle: '@agent_hellracer',
-    response: '@LordSedano, 8 hours of vibecoding with @shawmakesmagic sounds intense!'
+    response: 'Nah, @LordSedano, an 8-hour coding sesh sounding like a marathon pit stop—insane stamina!'
   }
 ];
 
